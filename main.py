@@ -1,6 +1,6 @@
 import os
 import json
-from datetime import datetime # [추가]
+from datetime import datetime, timedelta
 import google.generativeai as genai
 from fastapi import FastAPI, Depends, HTTPException, Request, Body # [Body 추가]
 from fastapi.responses import HTMLResponse
@@ -77,9 +77,13 @@ def read_quiz(quiz_id: int, db: Session = Depends(get_db)):
     if not quiz:
         raise HTTPException(status_code=404, detail="퀴즈를 찾을 수 없습니다.")
     
-    # 공개 시간 체크
-    if quiz.available_from and quiz.available_from > datetime.now():
-        raise HTTPException(status_code=403, detail="아직 시험이 공개되지 않았습니다.")
+    # [수정] 서버 시간(UTC)에 9시간을 더해 한국 시간(KST)으로 변환 후 비교
+    if quiz.available_from:
+        # 현재 서버 시간이 UTC라고 가정하고 9시간을 더해줌
+        now_kst = datetime.now() + timedelta(hours=9)
+        
+        if quiz.available_from > now_kst:
+            raise HTTPException(status_code=403, detail="아직 시험이 공개되지 않았습니다.")
 
     return json.loads(quiz.quiz_data)
 
