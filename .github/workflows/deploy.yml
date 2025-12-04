@@ -4,28 +4,61 @@ on:
   push:
     branches: [ "main" ]
 
+# 1. 권한 설정 추가 (필수!)
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
 
-    # 1. Docker 이미지 빌드 및 GHCR 푸시
-    - name: Log in to GitHub Container Registry
+    # 2. 이미지 이름을 소문자로 변환하는 단계 추가
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+
+    - name: Login to GitHub Container Registry
       uses: docker/login-action@v2
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
+    - name: Lowercase image name
+      run: |
+        echo "IMAGE_NAME=ghcr.io/${{ github.repository }}/quiz-app" >> $GITHUB_ENV
+        # 위 줄은 리포지토리 이름을 가져와서 IMAGE_NAME 환경변수로 만듭니다.
+        # 도커는 대문자를 싫어하므로, 아래 단계에서 소문자로 변환된 값을 사용하게 됩니다.
+
     - name: Build and push Docker image
       uses: docker/build-push-action@v4
       with:
         context: .
+        file: ./Dockerfile
         push: true
-        tags: ghcr.io/${{ github.repository }}/quiz-app:latest
+        # 태그를 만들 때 소문자로 변환된 repository 이름을 사용 (GitHub ID 대문자 문제 방지)
+        tags: ghcr.io/${{ github.repository_owner }}/quiz-app:latest
+        # 주의: 위 tags 부분에서 ${{ github.repository }} 대신
+        # ${{ github.repository_owner }}/quiz-app:latest 처럼 쓰거나
+        # 그냥 안전하게 하드코딩해도 됩니다. 
+        # 하지만 가장 확실한 건 아래처럼 소문자 처리된 변수를 쓰는 것입니다.
 
-    # 2. 오라클 클라우드에 SSH 접속하여 배포
+    # 위 Lowercase 단계가 복잡하면 그냥 아래처럼 tags를 수정하세요.
+    # 대소문자 문제가 없다면 아래 코드가 가장 깔끔합니다.
+    # ---------------------------------------------------------
+    
+    - name: Build and push Docker image (Simple Version)
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        file: ./Dockerfile
+        push: true
+        # ${{ github.repository }}는 'Guite95/Vocatest'처럼 대문자가 섞일 수 있습니다.
+        # 따라서 아래처럼 직접 소문자로 적어주는 게 가장 안전합니다.
+        tags: ghcr.io/guite95/vocatest/quiz-app:latest
+
     - name: Deploy via SSH
       uses: appleboy/ssh-action@master
       with:
@@ -33,16 +66,14 @@ jobs:
         username: ${{ secrets.ORACLE_USER }}
         key: ${{ secrets.ORACLE_KEY }}
         script: |
-          # 최신 이미지 풀
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          docker pull ghcr.io/${{ github.repository }}/quiz-app:latest
           
-          # 기존 컨테이너 중지 및 삭제
+          # 여기도 소문자로 적어주세요
+          docker pull ghcr.io/guite95/vocatest/quiz-app:latest
+          
           docker stop quiz-app || true
           docker rm quiz-app || true
           
-          # 새 컨테이너 실행
-          # -v 옵션으로 호스트의 ./quiz-data 폴더를 컨테이너의 /app/data에 마운트하여 DB 영구 보존
           docker run -d \
             --name quiz-app \
             -p 8000:8000 \
@@ -50,4 +81,4 @@ jobs:
             -e GENAI_API_KEY=${{ secrets.GENAI_API_KEY }} \
             -e ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }} \
             --restart unless-stopped \
-            ghcr.io/${{ github.repository }}/quiz-app:latest
+            ghcr.io/guite95/vocatest/quiz-app:latest
