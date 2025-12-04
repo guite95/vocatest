@@ -7,11 +7,12 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
     <style>
-        /* 모달 페이드인 효과 */
         .modal-enter { opacity: 0; transform: scale(0.95); }
         .modal-enter-active { opacity: 1; transform: scale(1); transition: opacity 0.2s, transform 0.2s; }
-        .modal-leave { opacity: 1; transform: scale(1); }
-        .modal-leave-active { opacity: 0; transform: scale(0.95); transition: opacity 0.2s, transform 0.2s; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 4px; }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     </style>
 </head>
 <body class="bg-gray-100 min-h-screen p-4 font-sans text-gray-800">
@@ -32,7 +33,7 @@
                     <h2 class="text-2xl font-bold text-gray-800">도전할 퀴즈 선택</h2>
                     <span class="text-sm text-gray-500">생성된 문제지 목록입니다</span>
                 </div>
-                <div id="quiz-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div id="quiz-list" class="grid grid-cols-1 gap-4">
                     </div>
             </div>
 
@@ -69,15 +70,15 @@
                 <div class="space-y-4">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">범위 이름</label>
-                        <input type="text" id="range-name" placeholder="예: Cambridge Test 1" class="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition">
+                        <input type="text" id="range-name" placeholder="예: Cambridge Test 1" class="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none">
                     </div>
                     <div>
                         <label class="block text-sm font-medium text-gray-700 mb-1">단어 목록 (붙여넣기)</label>
-                        <textarea id="range-content" rows="12" placeholder="형식: 번호 영단어 뜻 (엑셀에서 복사한 그대로 붙여넣으세요)" class="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition font-mono text-sm"></textarea>
+                        <textarea id="range-content" rows="12" placeholder="형식: 번호 영단어 뜻" class="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-sm"></textarea>
                     </div>
                 </div>
                 <div class="flex gap-3 pt-4">
-                    <button onclick="createWordRange()" class="flex-1 bg-indigo-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-indigo-700 transition shadow-lg shadow-indigo-200">저장하기</button>
+                    <button onclick="createWordRange()" class="flex-1 bg-indigo-600 text-white px-6 py-3 rounded-lg font-bold hover:bg-indigo-700 transition">저장하기</button>
                     <button onclick="setView('admin')" class="flex-1 bg-gray-200 text-gray-700 px-6 py-3 rounded-lg font-bold hover:bg-gray-300 transition">취소</button>
                 </div>
             </div>
@@ -88,15 +89,23 @@
                     <p class="text-sm text-gray-500">어떤 범위에서 문제를 출제할까요?</p>
                 </div>
                 
-                <div>
-                    <label class="block text-sm font-medium text-gray-700 mb-1">퀴즈 제목</label>
-                    <input type="text" id="quiz-title" placeholder="예: 1학기 중간고사 대비" class="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-green-500 outline-none">
-                </div>
-                
-                <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                    <p class="text-sm font-bold text-gray-700 mb-3">출제 범위 선택 (다중 선택 가능)</p>
-                    <div id="range-checkbox-list" class="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
-                        </div>
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">퀴즈 제목</label>
+                        <input type="text" id="quiz-title" placeholder="예: 1학기 중간고사 대비" class="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-green-500 outline-none">
+                    </div>
+                    
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 mb-1">시험 공개 시간 (설정 안 하면 즉시 공개)</label>
+                        <input type="datetime-local" id="quiz-available-from" class="w-full border border-gray-300 p-3 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-gray-600">
+                        <p class="text-xs text-gray-400 mt-1">* 설정한 시간이 지나야 학생들이 문제를 볼 수 있습니다.</p>
+                    </div>
+
+                    <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                        <p class="text-sm font-bold text-gray-700 mb-3">출제 범위 선택 (다중 선택 가능)</p>
+                        <div id="range-checkbox-list" class="space-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
+                            </div>
+                    </div>
                 </div>
 
                 <div class="flex gap-3 pt-2">
@@ -108,7 +117,7 @@
                 
                 <div id="gen-loading" class="hidden flex flex-col items-center justify-center py-8 space-y-3">
                     <div class="w-10 h-10 border-4 border-green-200 border-t-green-600 rounded-full animate-spin"></div>
-                    <p class="text-green-700 font-medium animate-pulse">AI가 열심히 문제를 만들고 있습니다... (약 15초)</p>
+                    <p class="text-green-700 font-medium animate-pulse">AI가 문제를 만들고 있습니다... (약 15초)</p>
                 </div>
             </div>
 
@@ -121,17 +130,14 @@
                     <div class="text-blue-600 font-bold bg-blue-50 px-3 py-1 rounded-full text-sm">진행 중</div>
                 </div>
                 <div id="quiz-container" class="space-y-6"></div>
-                
                 <div class="pt-6">
-                    <button onclick="submitQuiz()" id="btn-submit" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-blue-700 transition shadow-xl shadow-blue-200 transform hover:-translate-y-1">
+                    <button onclick="submitQuiz()" id="btn-submit" class="w-full bg-blue-600 text-white py-4 rounded-xl font-bold text-lg hover:bg-blue-700 transition shadow-xl shadow-blue-200">
                         💯 다 풀었어요! (채점하기)
                     </button>
                 </div>
-
                 <div id="grading-loading" class="hidden flex flex-col items-center justify-center py-12 space-y-4">
                     <div class="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin"></div>
                     <p class="text-blue-700 font-bold text-lg">채점 중입니다...</p>
-                    <p class="text-sm text-gray-500">유의어와 정답을 비교 분석하고 있습니다.</p>
                 </div>
             </div>
 
@@ -151,10 +157,10 @@
                     <table class="min-w-full text-sm divide-y divide-gray-200">
                         <thead class="bg-gray-50">
                             <tr>
-                                <th class="px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wider w-1/3">문제</th>
-                                <th class="px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wider w-1/3">내 답안</th>
-                                <th class="px-4 py-3 text-left font-medium text-gray-500 uppercase tracking-wider w-1/3">정답</th>
-                                <th class="px-4 py-3 text-center font-medium text-gray-500 uppercase tracking-wider w-12">결과</th>
+                                <th class="px-4 py-3 text-left w-1/3">문제</th>
+                                <th class="px-4 py-3 text-left w-1/3">내 답안</th>
+                                <th class="px-4 py-3 text-left w-1/3">정답</th>
+                                <th class="px-4 py-3 text-center w-12">결과</th>
                             </tr>
                         </thead>
                         <tbody id="result-table-body" class="bg-white divide-y divide-gray-200"></tbody>
@@ -168,11 +174,8 @@
         <div id="custom-modal-content" class="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4 transform transition-all scale-95 opacity-0">
             <h3 id="modal-title" class="text-lg font-bold text-gray-900 mb-2">알림</h3>
             <p id="modal-message" class="text-gray-600 mb-6 leading-relaxed">내용</p>
-            
             <input type="password" id="modal-input" class="w-full border border-gray-300 p-3 rounded-lg mb-6 hidden focus:ring-2 focus:ring-blue-500 outline-none" placeholder="입력하세요">
-            
-            <div class="flex gap-3 justify-end" id="modal-buttons">
-                </div>
+            <div class="flex gap-3 justify-end" id="modal-buttons"></div>
         </div>
     </div>
 
@@ -181,7 +184,7 @@
         let currentQuizData = [];
         let gradeResult = [];
 
-        // --- 커스텀 모달 함수 ---
+        // 모달 유틸리티
         function showModal({ type, title, message, placeholder = "" }) {
             return new Promise((resolve) => {
                 const backdrop = document.getElementById('custom-modal-backdrop');
@@ -191,13 +194,11 @@
                 const inputEl = document.getElementById('modal-input');
                 const btnContainer = document.getElementById('modal-buttons');
 
-                // 초기화
                 titleEl.innerText = title;
                 msgEl.innerText = message;
                 btnContainer.innerHTML = '';
                 inputEl.value = '';
                 
-                // 타입별 설정
                 if (type === 'prompt') {
                     inputEl.classList.remove('hidden');
                     inputEl.placeholder = placeholder;
@@ -206,15 +207,11 @@
                     inputEl.classList.add('hidden');
                 }
 
-                // 버튼 생성 함수
                 const createBtn = (text, cls, onClick) => {
                     const btn = document.createElement('button');
                     btn.innerText = text;
                     btn.className = `px-4 py-2 rounded-lg font-bold transition ${cls}`;
-                    btn.onclick = () => {
-                        closeModal();
-                        onClick();
-                    };
+                    btn.onclick = () => { closeModal(); onClick(); };
                     btnContainer.appendChild(btn);
                 };
 
@@ -226,19 +223,10 @@
                 } else if (type === 'prompt') {
                     createBtn("취소", "bg-gray-200 text-gray-700 hover:bg-gray-300", () => resolve(null));
                     createBtn("확인", "bg-indigo-600 text-white hover:bg-indigo-700", () => resolve(inputEl.value));
-                    
-                    // 엔터키 지원
-                    inputEl.onkeydown = (e) => {
-                        if(e.key === 'Enter') {
-                            closeModal();
-                            resolve(inputEl.value);
-                        }
-                    };
+                    inputEl.onkeydown = (e) => { if(e.key === 'Enter') { closeModal(); resolve(inputEl.value); } };
                 }
 
-                // 보여주기
                 backdrop.classList.remove('hidden');
-                // 애니메이션
                 setTimeout(() => {
                     content.classList.remove('scale-95', 'opacity-0');
                     content.classList.add('scale-100', 'opacity-100');
@@ -250,53 +238,31 @@
         function closeModal() {
             const backdrop = document.getElementById('custom-modal-backdrop');
             const content = document.getElementById('custom-modal-content');
-            
             content.classList.remove('scale-100', 'opacity-100');
             content.classList.add('scale-95', 'opacity-0');
-            
-            setTimeout(() => {
-                backdrop.classList.add('hidden');
-            }, 200);
+            setTimeout(() => { backdrop.classList.add('hidden'); }, 200);
         }
 
-        // --- 기존 함수 래퍼 (async/await 필수) ---
-        async function myAlert(msg) {
-            await showModal({ type: 'alert', title: '알림', message: msg });
-        }
-        async function myConfirm(msg) {
-            return await showModal({ type: 'confirm', title: '확인', message: msg });
-        }
-        async function myPrompt(msg, placeholder) {
-            return await showModal({ type: 'prompt', title: '입력', message: msg, placeholder: placeholder });
-        }
-
+        async function myAlert(msg) { await showModal({ type: 'alert', title: '알림', message: msg }); }
+        async function myConfirm(msg) { return await showModal({ type: 'confirm', title: '확인', message: msg }); }
+        async function myPrompt(msg, placeholder) { return await showModal({ type: 'prompt', title: '입력', message: msg, placeholder: placeholder }); }
 
         // --- 앱 로직 ---
 
         function setView(viewId) {
             const views = ['home', 'admin', 'admin-range', 'admin-create-quiz', 'quiz-play', 'result'];
             views.forEach(id => document.getElementById(`view-${id}`).classList.add('hidden'));
-            
-            const target = document.getElementById(`view-${viewId}`);
-            target.classList.remove('hidden');
-            
-            // 페이드인 효과
-            target.classList.add('animate-fade-in'); 
-            
+            document.getElementById(`view-${viewId}`).classList.remove('hidden');
+            document.getElementById(`view-${viewId}`).classList.add('animate-fade-in'); 
             if(viewId === 'home') loadQuizzes();
         }
 
         async function checkAdmin() {
-            // 커스텀 프롬프트 사용
             const pw = await myPrompt("관리자 비밀번호를 입력하세요:", "비밀번호");
-            if(pw) {
-                // 비밀번호 검증을 위해 서버에 더미 요청을 보내거나 일단 저장
-                // 여기서는 편의상 비밀번호를 저장하고 넘어감 (실제 검증은 API 호출시 이루어짐)
-                adminPassword = pw;
-                setView('admin');
-            }
+            if(pw) { adminPassword = pw; setView('admin'); }
         }
 
+        // [수정] 퀴즈 목록 로드 (잠금 및 삭제 로직 포함)
         async function loadQuizzes() {
             try {
                 const res = await axios.get('/api/quizzes');
@@ -304,76 +270,101 @@
                 list.innerHTML = '';
                 
                 if(res.data.length === 0) {
-                    list.innerHTML = `
-                        <div class="col-span-1 md:col-span-2 text-center py-10 bg-gray-50 rounded-lg border border-dashed border-gray-300">
-                            <p class="text-gray-500 mb-2">아직 생성된 퀴즈가 없습니다.</p>
-                            <button onclick="checkAdmin()" class="text-blue-600 font-bold hover:underline">관리자 메뉴에서 퀴즈를 만들어보세요!</button>
-                        </div>
-                    `;
+                    list.innerHTML = `<div class="text-center py-10 bg-gray-50 rounded-lg"><p class="text-gray-500">생성된 퀴즈가 없습니다.</p></div>`;
                     return;
                 }
 
+                const now = new Date(); // 현재 시간 (브라우저 기준)
+
                 res.data.forEach(quiz => {
+                    const availableFrom = quiz.available_from ? new Date(quiz.available_from) : null;
+                    const isLocked = availableFrom && availableFrom > now;
+                    
                     const div = document.createElement('div');
-                    div.className = 'bg-white p-6 rounded-xl border border-gray-200 hover:border-blue-400 cursor-pointer shadow-sm hover:shadow-md transition group';
+                    // 스타일: 잠김 상태면 회색조, 아니면 흰색
+                    div.className = `relative p-6 rounded-xl border border-gray-200 shadow-sm transition group ${isLocked ? 'bg-gray-100 cursor-not-allowed' : 'bg-white hover:border-blue-400 cursor-pointer hover:shadow-md'}`;
+                    
+                    let timeText = "";
+                    if (isLocked) {
+                        timeText = `<div class="text-red-500 text-sm font-bold flex items-center gap-1">🔒 ${availableFrom.toLocaleString()} 오픈</div>`;
+                    } else {
+                        timeText = `<div class="text-blue-600 text-sm font-bold flex items-center gap-1">▶ 도전 가능</div>`;
+                    }
+
                     div.innerHTML = `
-                        <div class="flex items-center justify-between mb-2">
-                            <span class="bg-blue-100 text-blue-700 text-xs px-2 py-1 rounded-md font-bold">시험지</span>
-                            <span class="text-gray-300 group-hover:text-blue-500 transition">▶ 도전</span>
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h3 class="font-bold text-lg text-gray-800 ${isLocked ? 'text-gray-500' : ''}">${quiz.title}</h3>
+                                ${timeText}
+                            </div>
+                            <button onclick="event.stopPropagation(); deleteQuiz(${quiz.id})" class="text-gray-300 hover:text-red-500 p-2 rounded-full transition" title="삭제">
+                                🗑️
+                            </button>
                         </div>
-                        <h3 class="font-bold text-lg text-gray-800 group-hover:text-blue-700 transition">${quiz.title}</h3>
                     `;
-                    div.onclick = () => startQuizPlay(quiz.id, quiz.title);
+
+                    // 잠겨있으면 클릭 시 경고, 아니면 시작
+                    if (isLocked) {
+                        div.onclick = () => myAlert(`이 시험은 ${availableFrom.toLocaleString()}부터 볼 수 있습니다.`);
+                    } else {
+                        div.onclick = () => startQuizPlay(quiz.id, quiz.title);
+                    }
+
                     list.appendChild(div);
                 });
             } catch(e) { console.error(e); }
         }
 
+        // [추가] 퀴즈 삭제
+        async function deleteQuiz(quizId) {
+            const pw = await myPrompt("시험지를 삭제하시겠습니까?\n관리자 비밀번호를 입력하세요:", "비밀번호");
+            if (!pw) return;
+
+            try {
+                await axios.delete(`/api/quizzes/${quizId}`, { data: { password: pw } });
+                await myAlert("삭제되었습니다.");
+                loadQuizzes();
+            } catch (e) {
+                await myAlert("삭제 실패: " + (e.response?.data?.detail || e.message));
+            }
+        }
+
         async function createWordRange() {
             const name = document.getElementById('range-name').value;
             const content = document.getElementById('range-content').value;
-            if(!name || !content) return await myAlert("이름과 내용을 모두 입력해주세요.");
+            if(!name || !content) return await myAlert("내용을 입력해주세요.");
 
             try {
                 await axios.post('/api/word-sets', { name, content, password: adminPassword });
-                await myAlert('성공적으로 저장되었습니다!');
+                await myAlert('저장되었습니다!');
                 document.getElementById('range-name').value = '';
                 document.getElementById('range-content').value = '';
                 setView('admin');
-            } catch (e) { await myAlert('저장 실패: ' + (e.response?.data?.detail || e.message)); }
+            } catch (e) { await myAlert('실패: ' + (e.response?.data?.detail || e.message)); }
         }
 
         async function loadRangesForQuiz() {
             try {
-                // 여기서 백엔드가 id 역순(최신순)으로 정렬해서 보내줌
                 const res = await axios.get('/api/word-sets');
                 const list = document.getElementById('range-checkbox-list');
                 list.innerHTML = '';
-                
-                if(res.data.length === 0) {
-                    await myAlert("등록된 단어장이 없습니다.\n[문제 범위 추가]부터 먼저 해주세요.");
-                    return;
-                }
-                
+                if(res.data.length === 0) return await myAlert("등록된 단어장이 없습니다.");
                 res.data.forEach(set => {
-                    list.innerHTML += `
-                        <label class="flex items-center space-x-3 p-3 hover:bg-blue-50 rounded-lg cursor-pointer transition border border-transparent hover:border-blue-100">
-                            <input type="checkbox" value="${set.id}" class="range-chk w-5 h-5 text-blue-600 rounded focus:ring-blue-500">
-                            <span class="text-gray-700 font-medium">${set.name}</span>
-                        </label>
-                    `;
+                    list.innerHTML += `<label class="flex items-center space-x-3 p-3 hover:bg-blue-50 rounded-lg cursor-pointer"><input type="checkbox" value="${set.id}" class="range-chk w-5 h-5 text-blue-600"><span class="text-gray-700">${set.name}</span></label>`;
                 });
                 setView('admin-create-quiz');
-            } catch(e) { await myAlert("데이터 로딩 실패"); }
+            } catch(e) { await myAlert("로딩 실패"); }
         }
 
+        // [수정] 퀴즈 생성 (시간 데이터 전송)
         async function generateAndSaveQuiz() {
             const title = document.getElementById('quiz-title').value;
+            const dateVal = document.getElementById('quiz-available-from').value; // datetime string
             const checkboxes = document.querySelectorAll('.range-chk:checked');
             const ids = Array.from(checkboxes).map(cb => parseInt(cb.value));
 
-            if(!title) return await myAlert("퀴즈 제목을 입력해주세요.");
-            if(ids.length === 0) return await myAlert("최소 1개 이상의 범위를 선택해주세요.");
+            if(!title) return await myAlert("제목을 입력해주세요.");
+            if(ids.length === 0) return await myAlert("범위를 선택해주세요.");
 
             document.getElementById('btn-gen-quiz').classList.add('hidden');
             document.getElementById('gen-loading').classList.remove('hidden');
@@ -382,9 +373,10 @@
                 await axios.post('/api/quiz/create', {
                     title: title,
                     word_set_ids: ids,
-                    password: adminPassword
+                    password: adminPassword,
+                    available_from: dateVal || null // 값이 없으면 null 전송
                 });
-                await myAlert('퀴즈가 생성되었습니다!\n메인 화면에서 바로 확인할 수 있습니다.');
+                await myAlert('퀴즈 생성 완료!');
                 setView('home'); 
             } catch (e) {
                 await myAlert('생성 실패: ' + (e.response?.data?.detail || e.message));
@@ -402,7 +394,10 @@
                 renderQuizQuestions();
                 setView('quiz-play');
                 window.scrollTo(0, 0);
-            } catch(e) { await myAlert("문제를 불러오는 중 오류가 발생했습니다."); }
+            } catch(e) { 
+                // 백엔드에서 403(Forbidden)을 보내면 여기서 잡힘
+                await myAlert("오류: " + (e.response?.data?.detail || "문제를 불러올 수 없습니다.")); 
+            }
         }
 
         function renderQuizQuestions() {
@@ -410,35 +405,24 @@
             container.innerHTML = '';
             currentQuizData.forEach((q, idx) => {
                 const isEngToKor = q.type === 'en_to_kr';
-                const div = document.createElement('div');
-                div.className = 'bg-white p-6 rounded-xl border border-gray-200 shadow-sm transition hover:shadow-md';
+                div = document.createElement('div');
+                div.className = 'bg-white p-6 rounded-xl border border-gray-200 shadow-sm';
                 div.innerHTML = `
-                    <div class="flex justify-between items-start mb-4">
-                        <div class="flex items-center gap-3">
-                            <span class="bg-blue-100 text-blue-800 font-bold px-3 py-1 rounded-lg text-sm">Q${idx+1}</span>
-                            <span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">${isEngToKor ? '뜻 쓰기' : '단어 쓰기'}</span>
-                        </div>
-                    </div>
-                    <div class="mb-4 text-xl font-bold text-gray-800 pl-1">${q.question}</div>
-                    <input type="text" id="answer-${idx}" 
-                        class="w-full border-b-2 border-gray-200 bg-gray-50 p-3 rounded-t-md focus:border-blue-500 focus:bg-white focus:outline-none transition text-lg" 
-                        placeholder="${isEngToKor ? '뜻을 입력하세요' : '영어 단어를 입력하세요'}" autocomplete="off">
+                    <div class="flex items-center gap-3 mb-4"><span class="bg-blue-100 text-blue-800 font-bold px-3 py-1 rounded-lg text-sm">Q${idx+1}</span><span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">${isEngToKor ? '뜻 쓰기' : '단어 쓰기'}</span></div>
+                    <div class="mb-4 text-xl font-bold text-gray-800">${q.question}</div>
+                    <input type="text" id="answer-${idx}" class="w-full border-b-2 border-gray-200 bg-gray-50 p-3 rounded-t-md focus:border-blue-500 focus:outline-none text-lg" placeholder="정답 입력" autocomplete="off">
                 `;
                 container.appendChild(div);
             });
         }
 
         async function submitQuiz() {
-            if(!await myConfirm("정말 제출하고 채점하시겠습니까?")) return;
-            
+            if(!await myConfirm("제출하시겠습니까?")) return;
             document.getElementById('btn-submit').classList.add('hidden');
             document.getElementById('grading-loading').classList.remove('hidden');
-
+            
             const answers = currentQuizData.map((q, idx) => ({
-                question: q.question,
-                user_answer: document.getElementById(`answer-${idx}`).value,
-                correct_answer: q.answer_key,
-                type: q.type
+                question: q.question, user_answer: document.getElementById(`answer-${idx}`).value, correct_answer: q.answer_key, type: q.type
             }));
 
             try {
@@ -447,56 +431,35 @@
                 renderResultTable();
                 setView('result');
                 window.scrollTo(0, 0);
-            } catch(e) {
-                await myAlert("채점 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.");
-                document.getElementById('btn-submit').classList.remove('hidden');
-            } finally {
-                document.getElementById('grading-loading').classList.add('hidden');
-            }
+            } catch(e) { await myAlert("채점 오류"); document.getElementById('btn-submit').classList.remove('hidden'); }
+            finally { document.getElementById('grading-loading').classList.add('hidden'); }
         }
 
         function renderResultTable() {
             const tbody = document.getElementById('result-table-body');
             tbody.innerHTML = '';
-            
-            // 점수 계산
-            const correctCount = gradeResult.filter(r => r.is_correct).length;
-            const score = Math.round((correctCount / gradeResult.length) * 100);
-            
-            // 결과 헤더에 점수 표시
-            const header = document.querySelector('#view-result h2');
-            header.innerHTML = `채점 결과 <span class="text-blue-600 text-lg ml-2">(${score}점)</span>`;
+            const score = Math.round((gradeResult.filter(r => r.is_correct).length / gradeResult.length) * 100);
+            document.querySelector('#view-result h2').innerHTML = `채점 결과 <span class="text-blue-600 ml-2">(${score}점)</span>`;
 
             gradeResult.forEach(row => {
                 const tr = document.createElement('tr');
-                tr.className = row.is_correct ? 'hover:bg-gray-50' : 'bg-red-50 hover:bg-red-100';
-                tr.innerHTML = `
-                    <td class="px-4 py-3 text-gray-800">${row.question}</td>
-                    <td class="px-4 py-3 font-bold ${row.is_correct ? 'text-blue-600' : 'text-red-600'}">${row.user_answer}</td>
-                    <td class="px-4 py-3 text-gray-500 text-sm">${row.correct_answer}</td>
-                    <td class="px-4 py-3 text-center text-lg">${row.is_correct ? '✅' : '❌'}</td>
-                `;
+                tr.className = row.is_correct ? '' : 'bg-red-50';
+                tr.innerHTML = `<td class="px-4 py-3">${row.question}</td><td class="px-4 py-3 font-bold ${row.is_correct ? 'text-blue-600' : 'text-red-600'}">${row.user_answer}</td><td class="px-4 py-3 text-gray-500">${row.correct_answer}</td><td class="px-4 py-3 text-center">${row.is_correct ? '✅' : '❌'}</td>`;
                 tbody.appendChild(tr);
             });
         }
 
         async function downloadWrongAnswers() {
             const wrong = gradeResult.filter(r => !r.is_correct);
-            if(wrong.length === 0) return await myAlert("틀린 문제가 없습니다! 완벽해요! 🎉");
-            
+            if(wrong.length === 0) return await myAlert("틀린 문제가 없습니다!");
             let text = "오답노트\n====================\n";
-            wrong.forEach((r, i) => {
-                text += `[문제] ${r.question}\n[정답] ${r.correct_answer}\n--------------------\n`;
-            });
-            
-            const blob = new Blob([text], {type: 'text/plain'});
+            wrong.forEach(r => text += `[문제] ${r.question}\n[정답] ${r.correct_answer}\n--------------------\n`);
             const a = document.createElement('a');
-            a.href = URL.createObjectURL(blob);
+            a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
             a.download = '오답노트.txt';
             a.click();
         }
         
-        // 초기 로드
         setView('home');
     </script>
 </body>

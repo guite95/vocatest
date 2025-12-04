@@ -1,25 +1,26 @@
 import os
 import json
+from datetime import datetime # [추가]
 import google.generativeai as genai
-from fastapi import FastAPI, Depends, HTTPException, Request
+from fastapi import FastAPI, Depends, HTTPException, Request, Body # [Body 추가]
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
 from sqlalchemy import desc
+from pydantic import BaseModel
 from database import SessionLocal, engine, Base
 import models
 
-# 데이터베이스 테이블 생성 (스키마가 변경되었으므로 기존 db파일 삭제 권장)
+# DB 초기화 (기존 데이터가 있다면 충돌날 수 있으니 db 파일 삭제 후 재시작 권장)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 
-# Gemini API 설정
+# Gemini API 설정 (사용자님의 gemini-2.0-flash 모델 적용)
 GENAI_API_KEY = os.getenv("GENAI_API_KEY")
 genai.configure(api_key=GENAI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash')
+model = genai.GenerativeModel('gemini-2.0-flash') 
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin1234")
 
@@ -30,7 +31,7 @@ def get_db():
     finally:
         db.close()
 
-# --- Pydantic Models ---
+# --- Models ---
 class WordSetCreate(BaseModel):
     name: str
     content: str
@@ -38,8 +39,9 @@ class WordSetCreate(BaseModel):
 
 class QuizCreateRequest(BaseModel):
     title: str
-    word_set_ids: list[int] # 다중 선택된 범위 ID들
+    word_set_ids: list[int]
     password: str
+    available_from: datetime = None # [추가] 공개 시간 (없으면 즉시 공개)
 
 class GradeRequest(BaseModel):
     answers: list
@@ -50,44 +52,56 @@ class GradeRequest(BaseModel):
 async def read_root(request: Request):
     return templates.TemplateResponse("index.html", {"request": request})
 
-# 1. 문제 범위(단어장) 목록 조회 (관리자용)
 @app.get("/api/word-sets")
 def read_word_sets(db: Session = Depends(get_db)):
-    # id 기준 내림차순(desc)으로 정렬하여 반환 -> 나중에 등록한 게 먼저 보임
     return db.query(models.WordSet).order_by(models.WordSet.id.desc()).all()
 
-# 2. 문제 범위 추가
 @app.post("/api/word-sets")
 def create_word_set(item: WordSetCreate, db: Session = Depends(get_db)):
     if item.password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="비밀번호가 틀렸습니다.")
-    
     db_item = models.WordSet(name=item.name, content=item.content)
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
     return db_item
 
-# 3. 퀴즈 목록 조회 (사용자용 메인 화면)
 @app.get("/api/quizzes")
 def read_quizzes(db: Session = Depends(get_db)):
-    return db.query(models.Quiz).all()
+    return db.query(models.Quiz).order_by(models.Quiz.id.desc()).all()
 
-# 4. 퀴즈 상세 조회 (시험 치기용)
+# [수정] 퀴즈 상세 조회 (시간 제한 로직 추가)
 @app.get("/api/quizzes/{quiz_id}")
 def read_quiz(quiz_id: int, db: Session = Depends(get_db)):
     quiz = db.query(models.Quiz).filter(models.Quiz.id == quiz_id).first()
     if not quiz:
         raise HTTPException(status_code=404, detail="퀴즈를 찾을 수 없습니다.")
+    
+    # 공개 시간 체크
+    if quiz.available_from and quiz.available_from > datetime.now():
+        raise HTTPException(status_code=403, detail="아직 시험이 공개되지 않았습니다.")
+
     return json.loads(quiz.quiz_data)
 
-# 5. 퀴즈 생성 및 저장 (관리자용 - 핵심 변경 기능)
+# [추가] 퀴즈 삭제 API
+@app.delete("/api/quizzes/{quiz_id}")
+def delete_quiz(quiz_id: int, password: str = Body(..., embed=True), db: Session = Depends(get_db)):
+    if password != ADMIN_PASSWORD:
+        raise HTTPException(status_code=401, detail="비밀번호가 틀렸습니다.")
+    
+    quiz = db.query(models.Quiz).filter(models.Quiz.id == quiz_id).first()
+    if not quiz:
+        raise HTTPException(status_code=404, detail="퀴즈를 찾을 수 없습니다.")
+    
+    db.delete(quiz)
+    db.commit()
+    return {"message": "삭제되었습니다."}
+
 @app.post("/api/quiz/create")
 async def create_quiz(req: QuizCreateRequest, db: Session = Depends(get_db)):
     if req.password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="비밀번호가 틀렸습니다.")
 
-    # 선택된 모든 범위의 단어 합치기
     selected_sets = db.query(models.WordSet).filter(models.WordSet.id.in_(req.word_set_ids)).all()
     if not selected_sets:
         raise HTTPException(status_code=404, detail="선택된 범위가 없습니다.")
@@ -122,11 +136,16 @@ async def create_quiz(req: QuizCreateRequest, db: Session = Depends(get_db)):
     try:
         response = model.generate_content(prompt)
         cleaned_text = response.text.replace("```json", "").replace("```", "").strip()
-        # 유효성 검사
-        json.loads(cleaned_text)
+        json.loads(cleaned_text) # 유효성 검사
         
-        # DB에 저장
-        db_quiz = models.Quiz(title=req.title, quiz_data=cleaned_text)
+        # 공개 시간 설정 (없으면 현재 시간)
+        start_time = req.available_from if req.available_from else datetime.now()
+
+        db_quiz = models.Quiz(
+            title=req.title, 
+            quiz_data=cleaned_text,
+            available_from=start_time # [저장]
+        )
         db.add(db_quiz)
         db.commit()
         
@@ -134,7 +153,6 @@ async def create_quiz(req: QuizCreateRequest, db: Session = Depends(get_db)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI 생성 실패: {str(e)}")
 
-# 6. 채점 (기존 유지)
 @app.post("/api/quiz/grade")
 async def grade_quiz(req: GradeRequest):
     prompt = f"""
