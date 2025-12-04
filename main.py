@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from sqlalchemy import desc
 from database import SessionLocal, engine, Base
 import models
 
@@ -18,7 +19,7 @@ templates = Jinja2Templates(directory="templates")
 # Gemini API 설정
 GENAI_API_KEY = os.getenv("GENAI_API_KEY")
 genai.configure(api_key=GENAI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('gemini-1.5-flash-001')
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin1234")
 
@@ -52,7 +53,8 @@ async def read_root(request: Request):
 # 1. 문제 범위(단어장) 목록 조회 (관리자용)
 @app.get("/api/word-sets")
 def read_word_sets(db: Session = Depends(get_db)):
-    return db.query(models.WordSet).all()
+    # id 기준 내림차순(desc)으로 정렬하여 반환 -> 나중에 등록한 게 먼저 보임
+    return db.query(models.WordSet).order_by(models.WordSet.id.desc()).all()
 
 # 2. 문제 범위 추가
 @app.post("/api/word-sets")
