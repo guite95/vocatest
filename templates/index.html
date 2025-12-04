@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 단어 퀴즈 마스터</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen p-4">
+    <div class="max-w-4xl mx-auto bg-white rounded-lg shadow-lg overflow-hidden">
+        <div class="bg-blue-600 p-4 text-white flex justify-between items-center">
+            <h1 class="text-xl font-bold">AI 단어 퀴즈</h1>
+            <button onclick="setView('admin')" class="text-sm bg-blue-700 px-3 py-1 rounded hover:bg-blue-800">관리자</button>
+        </div>
+
+        <div class="p-6">
+            
+            <div id="view-home" class="space-y-4">
+                <h2 class="text-lg font-bold">시험 볼 단어장을 선택하세요</h2>
+                <div id="word-set-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    </div>
+            </div>
+
+            <div id="view-admin" class="hidden space-y-4">
+                <h2 class="text-lg font-bold">새 단어장 추가 (관리자)</h2>
+                <input type="password" id="admin-pw" placeholder="관리자 비밀번호" class="w-full border p-2 rounded">
+                <input type="text" id="set-name" placeholder="단어장 이름 (예: Cambridge Test 1)" class="w-full border p-2 rounded">
+                <textarea id="set-content" rows="10" placeholder="단어 목록 붙여넣기" class="w-full border p-2 rounded"></textarea>
+                <div class="flex gap-2">
+                    <button onclick="createWordSet()" class="bg-green-500 text-white px-4 py-2 rounded">저장</button>
+                    <button onclick="setView('home')" class="bg-gray-500 text-white px-4 py-2 rounded">취소</button>
+                </div>
+            </div>
+
+            <div id="view-quiz" class="hidden space-y-6">
+                <div class="flex justify-between items-center border-b pb-2">
+                    <h2 class="text-lg font-bold">시험 진행 중</h2>
+                    <span class="text-sm text-gray-500">총 40문제</span>
+                </div>
+                <div id="quiz-container" class="space-y-4">
+                    </div>
+                <button onclick="submitQuiz()" id="btn-submit" class="w-full bg-blue-600 text-white py-3 rounded font-bold text-lg hover:bg-blue-700">
+                    채점 하기 (AI)
+                </button>
+                <div id="loading" class="hidden text-center py-4 text-blue-600">채점 중입니다... 잠시만 기다려주세요...</div>
+            </div>
+
+            <div id="view-result" class="hidden space-y-4">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-xl font-bold">채점 결과</h2>
+                    <div class="space-x-2">
+                        <button onclick="downloadWrongAnswers()" class="bg-red-500 text-white px-3 py-1 rounded text-sm">오답노트 다운로드(.txt)</button>
+                        <button onclick="location.reload()" class="bg-gray-500 text-white px-3 py-1 rounded text-sm">처음으로</button>
+                    </div>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full border text-sm">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="border p-2">문제</th>
+                                <th class="border p-2">내 답안</th>
+                                <th class="border p-2">정답</th>
+                                <th class="border p-2">결과</th>
+                            </tr>
+                        </thead>
+                        <tbody id="result-table-body">
+                            </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let currentQuizData = [];
+        let gradeResult = [];
+
+        // 화면 전환 함수
+        function setView(viewId) {
+            ['home', 'admin', 'quiz', 'result'].forEach(id => {
+                document.getElementById(`view-${id}`).classList.add('hidden');
+            });
+            document.getElementById(`view-${viewId}`).classList.remove('hidden');
+            
+            if(viewId === 'home') loadWordSets();
+        }
+
+        // 1. 단어장 목록 불러오기
+        async function loadWordSets() {
+            const res = await axios.get('/api/word-sets');
+            const list = document.getElementById('word-set-list');
+            list.innerHTML = '';
+            res.data.forEach(set => {
+                const div = document.createElement('div');
+                div.className = 'border p-4 rounded hover:bg-blue-50 cursor-pointer flex justify-between items-center';
+                div.innerHTML = `<span class="font-bold">${set.name}</span> <button class="bg-blue-500 text-white px-2 py-1 text-xs rounded">시험 시작</button>`;
+                div.onclick = () => startQuiz(set.id);
+                list.appendChild(div);
+            });
+        }
+
+        // 2. 단어장 저장
+        async function createWordSet() {
+            const pw = document.getElementById('admin-pw').value;
+            const name = document.getElementById('set-name').value;
+            const content = document.getElementById('set-content').value;
+            
+            try {
+                await axios.post('/api/word-sets', { name, content, password: pw });
+                alert('저장되었습니다.');
+                setView('home');
+            } catch (e) {
+                alert('저장 실패: ' + (e.response?.data?.detail || e.message));
+            }
+        }
+
+        // 3. 퀴즈 생성 및 시작
+        async function startQuiz(setId) {
+            const pw = prompt("관리자 비밀번호를 입력하면 문제가 생성됩니다.");
+            if(!pw) return;
+
+            try {
+                const res = await axios.post('/api/quiz/generate', { word_set_id: setId, password: pw });
+                currentQuizData = res.data;
+                renderQuiz();
+                setView('quiz');
+            } catch (e) {
+                alert('문제 생성 실패: ' + (e.response?.data?.detail || e.message));
+            }
+        }
+
+        function renderQuiz() {
+            const container = document.getElementById('quiz-container');
+            container.innerHTML = '';
+            currentQuizData.forEach((q, idx) => {
+                const div = document.createElement('div');
+                div.className = 'p-4 border rounded bg-white';
+                div.innerHTML = `
+                    <div class="mb-2 font-semibold">Q${idx+1}. ${q.question} <span class="text-xs text-gray-400">(${q.type === 'en_to_kr' ? '뜻을 쓰세요' : '영단어를 쓰세요'})</span></div>
+                    <input type="text" id="answer-${idx}" class="w-full border p-2 rounded focus:outline-blue-500" autocomplete="off">
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        // 4. 채점 요청
+        async function submitQuiz() {
+            if(!confirm('제출하시겠습니까?')) return;
+
+            document.getElementById('btn-submit').classList.add('hidden');
+            document.getElementById('loading').classList.remove('hidden');
+
+            const answers = currentQuizData.map((q, idx) => ({
+                question: q.question,
+                user_answer: document.getElementById(`answer-${idx}`).value,
+                correct_answer: q.answer_key, // AI에게 힌트용
+                type: q.type
+            }));
+
+            try {
+                const res = await axios.post('/api/quiz/grade', { answers });
+                gradeResult = res.data;
+                renderResult();
+                setView('result');
+            } catch (e) {
+                alert('채점 실패: ' + e.message);
+                document.getElementById('btn-submit').classList.remove('hidden');
+            } finally {
+                document.getElementById('loading').classList.add('hidden');
+            }
+        }
+
+        // 5. 결과 렌더링
+        function renderResult() {
+            const tbody = document.getElementById('result-table-body');
+            tbody.innerHTML = '';
+            gradeResult.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.className = row.is_correct ? '' : 'bg-red-50 text-red-700'; // 틀린 문제 빨간색
+                tr.innerHTML = `
+                    <td class="border p-2">${row.question}</td>
+                    <td class="border p-2 font-bold">${row.user_answer}</td>
+                    <td class="border p-2 text-green-700">${row.correct_answer || ''}</td>
+                    <td class="border p-2 text-center">${row.is_correct ? '⭕' : '❌'}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // 6. 오답노트 다운로드
+        function downloadWrongAnswers() {
+            const wrongAnswers = gradeResult.filter(r => !r.is_correct);
+            if(wrongAnswers.length === 0) {
+                alert('틀린 문제가 없습니다! 완벽해요!');
+                return;
+            }
+
+            let text = "오답노트\n====================\n\n";
+            wrongAnswers.forEach((r, i) => {
+                text += `${i+1}. 문제: ${r.question}\n   - 내 답: ${r.user_answer}\n   - 정답: ${r.correct_answer}\n\n`;
+            });
+
+            const blob = new Blob([text], { type: 'text/plain' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `오답노트_${new Date().toLocaleDateString()}.txt`;
+            a.click();
+        }
+
+        // 초기 실행
+        setView('home');
+    </script>
+</body>
+</html>

@@ -1,0 +1,53 @@
+name: Deploy to Oracle Cloud
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    # 1. Docker 이미지 빌드 및 GHCR 푸시
+    - name: Log in to GitHub Container Registry
+      uses: docker/login-action@v2
+      with:
+        registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        push: true
+        tags: ghcr.io/${{ github.repository }}/quiz-app:latest
+
+    # 2. 오라클 클라우드에 SSH 접속하여 배포
+    - name: Deploy via SSH
+      uses: appleboy/ssh-action@master
+      with:
+        host: ${{ secrets.ORACLE_HOST }}
+        username: ${{ secrets.ORACLE_USER }}
+        key: ${{ secrets.ORACLE_KEY }}
+        script: |
+          # 최신 이미지 풀
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          docker pull ghcr.io/${{ github.repository }}/quiz-app:latest
+          
+          # 기존 컨테이너 중지 및 삭제
+          docker stop quiz-app || true
+          docker rm quiz-app || true
+          
+          # 새 컨테이너 실행
+          # -v 옵션으로 호스트의 ./quiz-data 폴더를 컨테이너의 /app/data에 마운트하여 DB 영구 보존
+          docker run -d \
+            --name quiz-app \
+            -p 8000:8000 \
+            -v ~/quiz-data:/app/data \
+            -e GENAI_API_KEY=${{ secrets.GENAI_API_KEY }} \
+            -e ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }} \
+            --restart unless-stopped \
+            ghcr.io/${{ github.repository }}/quiz-app:latest
