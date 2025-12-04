@@ -97,21 +97,22 @@ async def create_quiz(req: QuizCreateRequest, db: Session = Depends(get_db)):
     prompt = f"""
     You are a quiz generator.
     Source Text Format: "Number [tab/space] English Word [tab/space] Korean Meaning". 
-    Example: "1 potter / pottery / pot 옹기장이 / 도자기"
+    Example 1: "1 potter / pottery / pot 옹기장이 / 도자기"
+    Example 2: "2 by chance 우연히"
     
     Task:
     1. Parse the source text below. Ignore the leading numbers.
     2. Create a JSON object with exactly 40 questions.
     3. Randomly select words from the source.
-    4. Create 27 questions: Show English Word -> Ask Korean Meaning (type: "en_to_kr").
-    5. Create 13 questions: Show Korean Meaning -> Ask English Word (type: "kr_to_en").
-    6. Shuffle the order completely.
-    7. Output ONLY raw JSON array.
-
+    4. If there are multiple English word divisions (e.g., "word1 / word2"), use only one as the answer.
+    5. Create 27 questions: Show English Word -> Ask Korean Meaning (type: "en_to_kr").
+    6. Create 13 questions: Show Korean Meaning -> Ask English Word (type: "kr_to_en").
+    7. Shuffle the order completely.
+    8. Output ONLY raw JSON array.
     Source Text:
     {combined_content}
     
-    JSON Format:
+    JSON Format(only example, do not include in output):
     [
         {{"id": 1, "question": "apple", "answer_key": "사과", "type": "en_to_kr"}},
         {{"id": 2, "question": "자동차", "answer_key": "car", "type": "kr_to_en"}}

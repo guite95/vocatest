@@ -486,7 +486,7 @@
             
             let text = "오답노트\n====================\n";
             wrong.forEach((r, i) => {
-                text += `[문제] ${r.question}\n[내가 쓴 답] ${r.user_answer}\n[정답] ${r.correct_answer}\n--------------------\n`;
+                text += `[문제] ${r.question}\n[정답] ${r.correct_answer}\n--------------------\n`;
             });
             
             const blob = new Blob([text], {type: 'text/plain'});
