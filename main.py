@@ -19,7 +19,7 @@ templates = Jinja2Templates(directory="templates")
 # Gemini API 설정
 GENAI_API_KEY = os.getenv("GENAI_API_KEY")
 genai.configure(api_key=GENAI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash-001')
+model = genai.GenerativeModel('gemini-2.0-flash')
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin1234")
 
