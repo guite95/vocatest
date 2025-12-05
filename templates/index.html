@@ -262,9 +262,16 @@
             if(pw) { adminPassword = pw; setView('admin'); }
         }
 
-        // [수정] 퀴즈 목록 로드 (잠금 및 삭제 로직 포함)
+        // [추가] 타이머들을 관리할 배열
+        let autoRefreshTimers = [];
+
+        // [수정] 퀴즈 목록 로드 (자동 잠금 해제 타이머 추가)
         async function loadQuizzes() {
             try {
+                // 1. 기존에 예약된 타이머가 있다면 모두 취소 (중복 실행 방지)
+                autoRefreshTimers.forEach(clearTimeout);
+                autoRefreshTimers = [];
+
                 const res = await axios.get('/api/quizzes');
                 const list = document.getElementById('quiz-list');
                 list.innerHTML = '';
@@ -274,12 +281,30 @@
                     return;
                 }
 
-                const now = new Date(); // 현재 시간 (브라우저 기준)
+                const now = new Date(); // 현재 클라이언트(브라우저) 시간
 
                 res.data.forEach(quiz => {
                     const availableFrom = quiz.available_from ? new Date(quiz.available_from) : null;
                     const isLocked = availableFrom && availableFrom > now;
                     
+                    // --- [핵심 기능 추가] 자동 새로고침 예약 ---
+                    if (isLocked) {
+                        const timeUntilOpen = availableFrom - now; // 남은 시간(밀리초) 계산
+                        
+                        // 남은 시간이 24시간 이내라면 타이머 설정 (너무 긴 시간은 제외)
+                        if (timeUntilOpen > 0 && timeUntilOpen < 86400000) {
+                            console.log(`[알림 예약] '${quiz.title}' 시험이 ${timeUntilOpen/1000}초 뒤에 열립니다.`);
+                            
+                            const timerId = setTimeout(() => {
+                                myAlert(`📢 딩동! '${quiz.title}' 시험이 지금 공개되었습니다!`);
+                                loadQuizzes(); // 목록 새로고침 (잠금 풀림)
+                            }, timeUntilOpen);
+                            
+                            autoRefreshTimers.push(timerId);
+                        }
+                    }
+                    // ------------------------------------------
+
                     const div = document.createElement('div');
                     // 스타일: 잠김 상태면 회색조, 아니면 흰색
                     div.className = `relative p-6 rounded-xl border border-gray-200 shadow-sm transition group ${isLocked ? 'bg-gray-100 cursor-not-allowed' : 'bg-white hover:border-blue-400 cursor-pointer hover:shadow-md'}`;
@@ -298,7 +323,7 @@
                                 ${timeText}
                             </div>
                             <button onclick="event.stopPropagation(); deleteQuiz(${quiz.id})" class="text-gray-300 hover:text-red-500 p-2 rounded-full transition" title="삭제">
-                                X
+                                🗑️
                             </button>
                         </div>
                     `;
