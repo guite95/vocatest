@@ -19,7 +19,7 @@
     <div class="max-w-4xl mx-auto bg-white rounded-xl shadow-xl overflow-hidden border border-gray-100">
         <div class="bg-blue-600 p-4 text-white flex justify-between items-center shadow-md">
             <h1 class="text-xl font-bold cursor-pointer hover:text-blue-100 transition" onclick="setView('home')">
-                🎓 AI 단어 퀴즈
+                단어 퀴즈
             </h1>
             <button onclick="checkAdmin()" class="text-sm bg-blue-700 bg-opacity-80 px-4 py-2 rounded-lg hover:bg-blue-800 transition shadow-sm font-medium">
                 ⚙️ 관리자 메뉴
@@ -183,8 +183,300 @@
         let adminPassword = "";
         let currentQuizData = [];
         let gradeResult = [];
+        
+        // [최적화] 타이머 변수 전역 관리
+        let activeInterval = null; // 1분 이내 남은 퀴즈 감시용 (1초마다 실행)
+        let wakeupTimeout = null;  // 먼 미래 퀴즈 감시용 (긴 대기 후 깨어남)
 
-        // 모달 유틸리티
+        // --- 유틸리티 ---
+        function parseDateSafe(dateString) {
+            if (!dateString) return null;
+            return new Date(dateString.replace(" ", "T"));
+        }
+
+        // --- [핵심] 스마트 감시 시스템 ---
+        function startSmartMonitoring(quizzes) {
+            // 1. 기존 타이머 모두 초기화 (중복 실행 방지)
+            if (activeInterval) clearInterval(activeInterval);
+            if (wakeupTimeout) clearTimeout(wakeupTimeout);
+            
+            const now = new Date();
+            let urgentQuizzes = [];      // 1분 이내로 남은 퀴즈들
+            let minDiffForNextWakeup = Infinity; // 다음 번 깨어날 시간 계산용
+
+            // 2. 모든 퀴즈를 분석하여 분류
+            quizzes.forEach(q => {
+                const openTime = parseDateSafe(q.available_from);
+                if (!openTime || openTime <= now) return; // 이미 열렸거나 시간 없는 건 패스
+
+                const diff = openTime - now; // 남은 시간 (밀리초)
+
+                if (diff <= 60000) { 
+                    // A. 1분도 안 남음 -> "긴급 감시 대상"
+                    urgentQuizzes.push(q);
+                } else {
+                    // B. 1분 이상 남음 -> "나중에 깨어날 시간" 계산
+                    // (오픈 1분 전이 되는 시점을 계산)
+                    const timeUntilUrgent = diff - 60000;
+                    if (timeUntilUrgent < minDiffForNextWakeup) {
+                        minDiffForNextWakeup = timeUntilUrgent;
+                    }
+                }
+            });
+
+            // 3. 전략 실행
+
+            // [전략 A] 긴급한 퀴즈가 하나라도 있으면 1초마다 감시 시작
+            if (urgentQuizzes.length > 0) {
+                console.log(`🔥 [긴급 모드] ${urgentQuizzes.length}개의 곧 열릴 퀴즈를 매초 감시합니다.`);
+                activeInterval = setInterval(() => {
+                    checkUrgentQuizzes(urgentQuizzes);
+                }, 1000);
+            }
+
+            // [전략 B] 멀리 남은 퀴즈가 있으면, 가장 빨리 '긴급 모드'가 되는 시간에 알람(Timeout) 설정
+            if (minDiffForNextWakeup !== Infinity) {
+                console.log(`💤 [대기 모드] 다음 감시까지 ${Math.ceil(minDiffForNextWakeup/1000)}초 동안 대기합니다.`);
+                wakeupTimeout = setTimeout(() => {
+                    console.log("⏰ 기상! 다시 감시 모드를 재설정합니다.");
+                    startSmartMonitoring(quizzes); // 재귀 호출로 다시 상황 판단
+                }, minDiffForNextWakeup);
+            }
+        }
+
+        // 긴급 퀴즈 매초 체크 함수
+        function checkUrgentQuizzes(urgentList) {
+            const now = new Date();
+            let opened = false;
+
+            urgentList.forEach((q, idx) => {
+                if (!q) return;
+                const openTime = parseDateSafe(q.available_from);
+                
+                if (openTime <= now) {
+                    // 오픈 시간 도달!
+                    console.log(`🎉 [오픈] ${q.title}`);
+                    myAlert(`📢 딩동! '${q.title}' 시험이 지금 공개되었습니다!`);
+                    
+                    delete urgentList[idx]; // 목록에서 제거
+                    opened = true;
+                }
+            });
+
+            if (opened) {
+                loadQuizzes(); // 화면 새로고침 (이때 startSmartMonitoring도 다시 호출됨)
+            }
+        }
+
+
+        // --- 앱 로직 ---
+
+        async function loadQuizzes() {
+            try {
+                const res = await axios.get('/api/quizzes');
+                const list = document.getElementById('quiz-list');
+                list.innerHTML = '';
+                
+                if(res.data.length === 0) {
+                    list.innerHTML = `<div class="text-center py-10 bg-gray-50 rounded-lg"><p class="text-gray-500">생성된 퀴즈가 없습니다.</p></div>`;
+                    return;
+                }
+
+                // [변경된 부분] 스마트 감시자 시작
+                startSmartMonitoring(res.data);
+
+                const now = new Date(); 
+
+                res.data.forEach(quiz => {
+                    const availableFrom = parseDateSafe(quiz.available_from);
+                    const isLocked = availableFrom && availableFrom > now;
+                    
+                    const div = document.createElement('div');
+                    div.className = `relative p-6 rounded-xl border border-gray-200 shadow-sm transition group ${isLocked ? 'bg-gray-100 cursor-not-allowed' : 'bg-white hover:border-blue-400 cursor-pointer hover:shadow-md'}`;
+                    
+                    let timeText = "";
+                    if (isLocked) {
+                        timeText = `<div class="text-red-500 text-sm font-bold flex items-center gap-1">🔒 ${availableFrom.toLocaleString()} 오픈</div>`;
+                    } else {
+                        timeText = `<div class="text-blue-600 text-sm font-bold flex items-center gap-1">▶ 도전 가능</div>`;
+                    }
+
+                    div.innerHTML = `
+                        <div class="flex justify-between items-start">
+                            <div>
+                                <h3 class="font-bold text-lg text-gray-800 ${isLocked ? 'text-gray-500' : ''}">${quiz.title}</h3>
+                                ${timeText}
+                            </div>
+                            <button onclick="event.stopPropagation(); deleteQuiz(${quiz.id})" class="text-gray-300 hover:text-red-500 p-2 rounded-full transition" title="삭제">
+                                🗑️
+                            </button>
+                        </div>
+                    `;
+
+                    if (isLocked) {
+                        div.onclick = () => myAlert(`이 시험은 ${availableFrom.toLocaleString()}부터 볼 수 있습니다.`);
+                    } else {
+                        div.onclick = () => startQuizPlay(quiz.id, quiz.title);
+                    }
+
+                    list.appendChild(div);
+                });
+            } catch(e) { console.error(e); }
+        }
+
+        // --- (나머지 기존 함수들은 그대로 유지해주세요: setView, checkAdmin, deleteQuiz 등) ---
+        function setView(viewId) {
+            const views = ['home', 'admin', 'admin-range', 'admin-create-quiz', 'quiz-play', 'result'];
+            views.forEach(id => document.getElementById(`view-${id}`).classList.add('hidden'));
+            document.getElementById(`view-${viewId}`).classList.remove('hidden');
+            document.getElementById(`view-${viewId}`).classList.add('animate-fade-in'); 
+            if(viewId === 'home') loadQuizzes();
+        }
+
+        async function checkAdmin() {
+            const pw = await myPrompt("관리자 비밀번호를 입력하세요:", "비밀번호");
+            if(pw) { adminPassword = pw; setView('admin'); }
+        }
+
+        async function deleteQuiz(quizId) {
+            const pw = await myPrompt("시험지를 삭제하시겠습니까?\n관리자 비밀번호를 입력하세요:", "비밀번호");
+            if (!pw) return;
+            try {
+                await axios.delete(`/api/quizzes/${quizId}`, { data: { password: pw } });
+                await myAlert("삭제되었습니다.");
+                loadQuizzes();
+            } catch (e) { await myAlert("삭제 실패: " + (e.response?.data?.detail || e.message)); }
+        }
+
+        async function createWordRange() {
+            const name = document.getElementById('range-name').value;
+            const content = document.getElementById('range-content').value;
+            if(!name || !content) return await myAlert("내용을 입력해주세요.");
+            try {
+                await axios.post('/api/word-sets', { name, content, password: adminPassword });
+                await myAlert('저장되었습니다!');
+                document.getElementById('range-name').value = '';
+                document.getElementById('range-content').value = '';
+                setView('admin');
+            } catch (e) { await myAlert('실패: ' + (e.response?.data?.detail || e.message)); }
+        }
+
+        async function loadRangesForQuiz() {
+            try {
+                const res = await axios.get('/api/word-sets');
+                const list = document.getElementById('range-checkbox-list');
+                list.innerHTML = '';
+                if(res.data.length === 0) return await myAlert("등록된 단어장이 없습니다.");
+                res.data.forEach(set => {
+                    list.innerHTML += `<label class="flex items-center space-x-3 p-3 hover:bg-blue-50 rounded-lg cursor-pointer"><input type="checkbox" value="${set.id}" class="range-chk w-5 h-5 text-blue-600"><span class="text-gray-700">${set.name}</span></label>`;
+                });
+                setView('admin-create-quiz');
+            } catch(e) { await myAlert("로딩 실패"); }
+        }
+
+        async function generateAndSaveQuiz() {
+            const title = document.getElementById('quiz-title').value;
+            const dateVal = document.getElementById('quiz-available-from').value;
+            const checkboxes = document.querySelectorAll('.range-chk:checked');
+            const ids = Array.from(checkboxes).map(cb => parseInt(cb.value));
+
+            if(!title) return await myAlert("제목을 입력해주세요.");
+            if(ids.length === 0) return await myAlert("범위를 선택해주세요.");
+
+            document.getElementById('btn-gen-quiz').classList.add('hidden');
+            document.getElementById('gen-loading').classList.remove('hidden');
+
+            try {
+                await axios.post('/api/quiz/create', {
+                    title: title,
+                    word_set_ids: ids,
+                    password: adminPassword,
+                    available_from: dateVal || null
+                });
+                await myAlert('퀴즈 생성 완료!');
+                setView('home'); 
+            } catch (e) {
+                await myAlert('생성 실패: ' + (e.response?.data?.detail || e.message));
+            } finally {
+                document.getElementById('btn-gen-quiz').classList.remove('hidden');
+                document.getElementById('gen-loading').classList.add('hidden');
+            }
+        }
+
+        async function startQuizPlay(quizId, title) {
+            try {
+                const res = await axios.get(`/api/quizzes/${quizId}`);
+                currentQuizData = res.data;
+                document.getElementById('play-title').innerText = title;
+                renderQuizQuestions();
+                setView('quiz-play');
+                window.scrollTo(0, 0);
+            } catch(e) { 
+                await myAlert("오류: " + (e.response?.data?.detail || "문제를 불러올 수 없습니다.")); 
+            }
+        }
+
+        function renderQuizQuestions() {
+            const container = document.getElementById('quiz-container');
+            container.innerHTML = '';
+            currentQuizData.forEach((q, idx) => {
+                const isEngToKor = q.type === 'en_to_kr';
+                const div = document.createElement('div');
+                div.className = 'bg-white p-6 rounded-xl border border-gray-200 shadow-sm';
+                div.innerHTML = `
+                    <div class="flex items-center gap-3 mb-4"><span class="bg-blue-100 text-blue-800 font-bold px-3 py-1 rounded-lg text-sm">Q${idx+1}</span><span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">${isEngToKor ? '뜻 쓰기' : '단어 쓰기'}</span></div>
+                    <div class="mb-4 text-xl font-bold text-gray-800">${q.question}</div>
+                    <input type="text" id="answer-${idx}" class="w-full border-b-2 border-gray-200 bg-gray-50 p-3 rounded-t-md focus:border-blue-500 focus:outline-none text-lg" placeholder="정답 입력" autocomplete="off">
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        async function submitQuiz() {
+            if(!await myConfirm("제출하시겠습니까?")) return;
+            document.getElementById('btn-submit').classList.add('hidden');
+            document.getElementById('grading-loading').classList.remove('hidden');
+            
+            const answers = currentQuizData.map((q, idx) => ({
+                question: q.question, user_answer: document.getElementById(`answer-${idx}`).value, correct_answer: q.answer_key, type: q.type
+            }));
+
+            try {
+                const res = await axios.post('/api/quiz/grade', { answers });
+                gradeResult = res.data;
+                renderResultTable();
+                setView('result');
+                window.scrollTo(0, 0);
+            } catch(e) { await myAlert("채점 오류"); document.getElementById('btn-submit').classList.remove('hidden'); }
+            finally { document.getElementById('grading-loading').classList.add('hidden'); }
+        }
+
+        function renderResultTable() {
+            const tbody = document.getElementById('result-table-body');
+            tbody.innerHTML = '';
+            const score = Math.round((gradeResult.filter(r => r.is_correct).length / gradeResult.length) * 100);
+            document.querySelector('#view-result h2').innerHTML = `채점 결과 <span class="text-blue-600 ml-2">(${score}점)</span>`;
+
+            gradeResult.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.className = row.is_correct ? '' : 'bg-red-50';
+                tr.innerHTML = `<td class="px-4 py-3">${row.question}</td><td class="px-4 py-3 font-bold ${row.is_correct ? 'text-blue-600' : 'text-red-600'}">${row.user_answer}</td><td class="px-4 py-3 text-gray-500">${row.correct_answer}</td><td class="px-4 py-3 text-center">${row.is_correct ? '✅' : '❌'}</td>`;
+                tbody.appendChild(tr);
+            });
+        }
+
+        async function downloadWrongAnswers() {
+            const wrong = gradeResult.filter(r => !r.is_correct);
+            if(wrong.length === 0) return await myAlert("틀린 문제가 없습니다!");
+            let text = "오답노트\n====================\n";
+            wrong.forEach(r => text += `[문제] ${r.question}\n[내 답] ${r.user_answer}\n[정답] ${r.correct_answer}\n--------------------\n`);
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
+            a.download = '오답노트.txt';
+            a.click();
+        }
+
+        // --- 모달 함수들 ---
         function showModal({ type, title, message, placeholder = "" }) {
             return new Promise((resolve) => {
                 const backdrop = document.getElementById('custom-modal-backdrop');
@@ -247,244 +539,7 @@
         async function myConfirm(msg) { return await showModal({ type: 'confirm', title: '확인', message: msg }); }
         async function myPrompt(msg, placeholder) { return await showModal({ type: 'prompt', title: '입력', message: msg, placeholder: placeholder }); }
 
-        // --- 앱 로직 ---
-
-        function setView(viewId) {
-            const views = ['home', 'admin', 'admin-range', 'admin-create-quiz', 'quiz-play', 'result'];
-            views.forEach(id => document.getElementById(`view-${id}`).classList.add('hidden'));
-            document.getElementById(`view-${viewId}`).classList.remove('hidden');
-            document.getElementById(`view-${viewId}`).classList.add('animate-fade-in'); 
-            if(viewId === 'home') loadQuizzes();
-        }
-
-        async function checkAdmin() {
-            const pw = await myPrompt("관리자 비밀번호를 입력하세요:", "비밀번호");
-            if(pw) { adminPassword = pw; setView('admin'); }
-        }
-
-        // [추가] 타이머들을 관리할 배열
-        let autoRefreshTimers = [];
-
-        // [수정] 퀴즈 목록 로드 (자동 잠금 해제 타이머 추가)
-        async function loadQuizzes() {
-            try {
-                // 1. 기존에 예약된 타이머가 있다면 모두 취소 (중복 실행 방지)
-                autoRefreshTimers.forEach(clearTimeout);
-                autoRefreshTimers = [];
-
-                const res = await axios.get('/api/quizzes');
-                const list = document.getElementById('quiz-list');
-                list.innerHTML = '';
-                
-                if(res.data.length === 0) {
-                    list.innerHTML = `<div class="text-center py-10 bg-gray-50 rounded-lg"><p class="text-gray-500">생성된 퀴즈가 없습니다.</p></div>`;
-                    return;
-                }
-
-                const now = new Date(); // 현재 클라이언트(브라우저) 시간
-
-                res.data.forEach(quiz => {
-                    const availableFrom = quiz.available_from ? new Date(quiz.available_from) : null;
-                    const isLocked = availableFrom && availableFrom > now;
-                    
-                    // --- [핵심 기능 추가] 자동 새로고침 예약 ---
-                    if (isLocked) {
-                        const timeUntilOpen = availableFrom - now; // 남은 시간(밀리초) 계산
-                        
-                        // 남은 시간이 24시간 이내라면 타이머 설정 (너무 긴 시간은 제외)
-                        if (timeUntilOpen > 0 && timeUntilOpen < 86400000) {
-                            console.log(`[알림 예약] '${quiz.title}' 시험이 ${timeUntilOpen/1000}초 뒤에 열립니다.`);
-                            
-                            const timerId = setTimeout(() => {
-                                myAlert(`📢 딩동! '${quiz.title}' 시험이 지금 공개되었습니다!`);
-                                loadQuizzes(); // 목록 새로고침 (잠금 풀림)
-                            }, timeUntilOpen);
-                            
-                            autoRefreshTimers.push(timerId);
-                        }
-                    }
-                    // ------------------------------------------
-
-                    const div = document.createElement('div');
-                    // 스타일: 잠김 상태면 회색조, 아니면 흰색
-                    div.className = `relative p-6 rounded-xl border border-gray-200 shadow-sm transition group ${isLocked ? 'bg-gray-100 cursor-not-allowed' : 'bg-white hover:border-blue-400 cursor-pointer hover:shadow-md'}`;
-                    
-                    let timeText = "";
-                    if (isLocked) {
-                        timeText = `<div class="text-red-500 text-sm font-bold flex items-center gap-1">🔒 ${availableFrom.toLocaleString()} 오픈</div>`;
-                    } else {
-                        timeText = `<div class="text-blue-600 text-sm font-bold flex items-center gap-1">▶ 도전 가능</div>`;
-                    }
-
-                    div.innerHTML = `
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <h3 class="font-bold text-lg text-gray-800 ${isLocked ? 'text-gray-500' : ''}">${quiz.title}</h3>
-                                ${timeText}
-                            </div>
-                            <button onclick="event.stopPropagation(); deleteQuiz(${quiz.id})" class="text-gray-300 hover:text-red-500 p-2 rounded-full transition" title="삭제">
-                                🗑️
-                            </button>
-                        </div>
-                    `;
-
-                    // 잠겨있으면 클릭 시 경고, 아니면 시작
-                    if (isLocked) {
-                        div.onclick = () => myAlert(`이 시험은 ${availableFrom.toLocaleString()}부터 볼 수 있습니다.`);
-                    } else {
-                        div.onclick = () => startQuizPlay(quiz.id, quiz.title);
-                    }
-
-                    list.appendChild(div);
-                });
-            } catch(e) { console.error(e); }
-        }
-
-        // [추가] 퀴즈 삭제
-        async function deleteQuiz(quizId) {
-            const pw = await myPrompt("시험지를 삭제하시겠습니까?\n관리자 비밀번호를 입력하세요:", "비밀번호");
-            if (!pw) return;
-
-            try {
-                await axios.delete(`/api/quizzes/${quizId}`, { data: { password: pw } });
-                await myAlert("삭제되었습니다.");
-                loadQuizzes();
-            } catch (e) {
-                await myAlert("삭제 실패: " + (e.response?.data?.detail || e.message));
-            }
-        }
-
-        async function createWordRange() {
-            const name = document.getElementById('range-name').value;
-            const content = document.getElementById('range-content').value;
-            if(!name || !content) return await myAlert("내용을 입력해주세요.");
-
-            try {
-                await axios.post('/api/word-sets', { name, content, password: adminPassword });
-                await myAlert('저장되었습니다!');
-                document.getElementById('range-name').value = '';
-                document.getElementById('range-content').value = '';
-                setView('admin');
-            } catch (e) { await myAlert('실패: ' + (e.response?.data?.detail || e.message)); }
-        }
-
-        async function loadRangesForQuiz() {
-            try {
-                const res = await axios.get('/api/word-sets');
-                const list = document.getElementById('range-checkbox-list');
-                list.innerHTML = '';
-                if(res.data.length === 0) return await myAlert("등록된 단어장이 없습니다.");
-                res.data.forEach(set => {
-                    list.innerHTML += `<label class="flex items-center space-x-3 p-3 hover:bg-blue-50 rounded-lg cursor-pointer"><input type="checkbox" value="${set.id}" class="range-chk w-5 h-5 text-blue-600"><span class="text-gray-700">${set.name}</span></label>`;
-                });
-                setView('admin-create-quiz');
-            } catch(e) { await myAlert("로딩 실패"); }
-        }
-
-        // [수정] 퀴즈 생성 (시간 데이터 전송)
-        async function generateAndSaveQuiz() {
-            const title = document.getElementById('quiz-title').value;
-            const dateVal = document.getElementById('quiz-available-from').value; // datetime string
-            const checkboxes = document.querySelectorAll('.range-chk:checked');
-            const ids = Array.from(checkboxes).map(cb => parseInt(cb.value));
-
-            if(!title) return await myAlert("제목을 입력해주세요.");
-            if(ids.length === 0) return await myAlert("범위를 선택해주세요.");
-
-            document.getElementById('btn-gen-quiz').classList.add('hidden');
-            document.getElementById('gen-loading').classList.remove('hidden');
-
-            try {
-                await axios.post('/api/quiz/create', {
-                    title: title,
-                    word_set_ids: ids,
-                    password: adminPassword,
-                    available_from: dateVal || null // 값이 없으면 null 전송
-                });
-                await myAlert('퀴즈 생성 완료!');
-                setView('home'); 
-            } catch (e) {
-                await myAlert('생성 실패: ' + (e.response?.data?.detail || e.message));
-            } finally {
-                document.getElementById('btn-gen-quiz').classList.remove('hidden');
-                document.getElementById('gen-loading').classList.add('hidden');
-            }
-        }
-
-        async function startQuizPlay(quizId, title) {
-            try {
-                const res = await axios.get(`/api/quizzes/${quizId}`);
-                currentQuizData = res.data;
-                document.getElementById('play-title').innerText = title;
-                renderQuizQuestions();
-                setView('quiz-play');
-                window.scrollTo(0, 0);
-            } catch(e) { 
-                // 백엔드에서 403(Forbidden)을 보내면 여기서 잡힘
-                await myAlert("오류: " + (e.response?.data?.detail || "문제를 불러올 수 없습니다.")); 
-            }
-        }
-
-        function renderQuizQuestions() {
-            const container = document.getElementById('quiz-container');
-            container.innerHTML = '';
-            currentQuizData.forEach((q, idx) => {
-                const isEngToKor = q.type === 'en_to_kr';
-                div = document.createElement('div');
-                div.className = 'bg-white p-6 rounded-xl border border-gray-200 shadow-sm';
-                div.innerHTML = `
-                    <div class="flex items-center gap-3 mb-4"><span class="bg-blue-100 text-blue-800 font-bold px-3 py-1 rounded-lg text-sm">Q${idx+1}</span><span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">${isEngToKor ? '뜻 쓰기' : '단어 쓰기'}</span></div>
-                    <div class="mb-4 text-xl font-bold text-gray-800">${q.question}</div>
-                    <input type="text" id="answer-${idx}" class="w-full border-b-2 border-gray-200 bg-gray-50 p-3 rounded-t-md focus:border-blue-500 focus:outline-none text-lg" placeholder="정답 입력" autocomplete="off">
-                `;
-                container.appendChild(div);
-            });
-        }
-
-        async function submitQuiz() {
-            if(!await myConfirm("제출하시겠습니까?")) return;
-            document.getElementById('btn-submit').classList.add('hidden');
-            document.getElementById('grading-loading').classList.remove('hidden');
-            
-            const answers = currentQuizData.map((q, idx) => ({
-                question: q.question, user_answer: document.getElementById(`answer-${idx}`).value, correct_answer: q.answer_key, type: q.type
-            }));
-
-            try {
-                const res = await axios.post('/api/quiz/grade', { answers });
-                gradeResult = res.data;
-                renderResultTable();
-                setView('result');
-                window.scrollTo(0, 0);
-            } catch(e) { await myAlert("채점 오류"); document.getElementById('btn-submit').classList.remove('hidden'); }
-            finally { document.getElementById('grading-loading').classList.add('hidden'); }
-        }
-
-        function renderResultTable() {
-            const tbody = document.getElementById('result-table-body');
-            tbody.innerHTML = '';
-            const score = Math.round((gradeResult.filter(r => r.is_correct).length / gradeResult.length) * 100);
-            document.querySelector('#view-result h2').innerHTML = `채점 결과 <span class="text-blue-600 ml-2">(${score}점)</span>`;
-
-            gradeResult.forEach(row => {
-                const tr = document.createElement('tr');
-                tr.className = row.is_correct ? '' : 'bg-red-50';
-                tr.innerHTML = `<td class="px-4 py-3">${row.question}</td><td class="px-4 py-3 font-bold ${row.is_correct ? 'text-blue-600' : 'text-red-600'}">${row.user_answer}</td><td class="px-4 py-3 text-gray-500">${row.correct_answer}</td><td class="px-4 py-3 text-center">${row.is_correct ? '✅' : '❌'}</td>`;
-                tbody.appendChild(tr);
-            });
-        }
-
-        async function downloadWrongAnswers() {
-            const wrong = gradeResult.filter(r => !r.is_correct);
-            if(wrong.length === 0) return await myAlert("틀린 문제가 없습니다!");
-            let text = "오답노트\n====================\n";
-            wrong.forEach(r => text += `[문제] ${r.question}\n[정답] ${r.correct_answer}\n--------------------\n`);
-            const a = document.createElement('a');
-            a.href = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
-            a.download = '오답노트.txt';
-            a.click();
-        }
-        
+        // 초기 실행
         setView('home');
     </script>
 </body>
