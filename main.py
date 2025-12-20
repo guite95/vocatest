@@ -128,7 +128,7 @@ async def create_quiz(req: QuizCreateRequest, db: Session = Depends(get_db)):
     7. Shuffle the order completely.
     8. There must be no duplicate questions.
     9. One's English and Korean pair should not appear again in reverse.
-    10. Important : en_to_kr : kr_to_en ratio must be exactly 27:13.
+    10. Important - en_to_kr : kr_to_en ratio must be exactly 27:13. if not, regenerate.
     11. Output ONLY raw JSON array.
     Source Text:
     {combined_content}
