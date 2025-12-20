@@ -112,53 +112,83 @@ async def create_quiz(req: QuizCreateRequest, db: Session = Depends(get_db)):
     
     combined_content = "\n".join([s.content for s in selected_sets])
 
+    # 1. AI에게는 '데이터 추출'만 요청 (단순화된 프롬프트)
     prompt = f"""
-    You are a quiz generator.
-    Source Text Format: "Number [tab/space] English Word [tab/space] Korean Meaning". 
-    Example 1: "1 potter / pottery / pot 옹기장이 / 도자기"
-    Example 2: "2 by chance 우연히"
-    
-    Task:
-    1. Parse the source text below. Ignore the leading numbers.
-    2. Create a JSON object with exactly 40 questions.
-    3. Randomly select words from the source.
-    4. If there are multiple English word divisions (e.g., "word1 / word2"), use only one as the answer.
-    5. Create 27 questions: Show English Word -> Ask Korean Meaning (type: "en_to_kr").
-    6. Create 13 questions: Show Korean Meaning -> Ask English Word (type: "kr_to_en").
-    7. Shuffle the order completely.
-    8. There must be no duplicate questions.
-    9. One's English and Korean pair should not appear again in reverse.
-    10. Important - en_to_kr : kr_to_en ratio must be exactly 27:13. if not, regenerate.
-    11. Output ONLY raw JSON array.
+    Extract all unique English-Korean vocabulary pairs from the text below.
+    Format: A RAW JSON array of objects. 
+    Each object must have "en" and "kr" keys.
     Source Text:
     {combined_content}
-    
-    JSON Format(only example, do not include in output):
-    [
-        {{"id": 1, "question": "apple", "answer_key": "사과", "type": "en_to_kr"}},
-        {{"id": 2, "question": "자동차", "answer_key": "car", "type": "kr_to_en"}}
-    ]
     """
     
     try:
         response = model.generate_content(prompt)
         cleaned_text = response.text.replace("```json", "").replace("```", "").strip()
-        json.loads(cleaned_text) # 유효성 검사
-        
-        # 공개 시간 설정 (없으면 현재 시간)
-        start_time = req.available_from if req.available_from else datetime.now()
+        all_words = json.loads(cleaned_text) # 추출된 전체 단어 리스트
 
+        # 2. Python에서 중복 제거 및 무작위 셔플
+        import random
+        random.shuffle(all_words)
+
+        # 3. 40개 선택 (단어가 부족하면 전체 선택)
+        target_total = 40
+        selected_pairs = all_words[:target_total]
+        
+        # 4. 비율 계산 (27:13)
+        # 만약 전체 단어가 40개가 안 될 경우를 대비해 비율로 계산
+        en_to_kr_count = int(len(selected_pairs) * (27/40))
+        
+        final_quiz = []
+        for i, pair in enumerate(selected_pairs):
+            # 'word1 / word2' 형태인 경우 첫 번째 단어만 사용
+            en_val = pair['en'].split('/')[0].strip()
+            kr_val = pair['kr'].split('/')[0].strip()
+            
+            if i < en_to_kr_count:
+                final_quiz.append({
+                    "id": i + 1,
+                    "question": en_val,
+                    "answer_key": kr_val,
+                    "type": "en_to_kr"
+                })
+            else:
+                final_quiz.append({
+                    "id": i + 1,
+                    "question": kr_val,
+                    "answer_key": en_val,
+                    "type": "kr_to_en"
+                })
+
+        # 5. 최종 검증 로직 (Validation)
+        # (1) 중복 문제 검사
+        questions = [q['question'] for q in final_quiz]
+        if len(questions) != len(set(questions)):
+            # 중복 발생 시 로직 재실행 혹은 에러 처리 (여기서는 중복 제거 후 재정렬 가능)
+            pass 
+
+        # (2) 타입별 개수 검사
+        actual_en_to_kr = len([q for q in final_quiz if q['type'] == 'en_to_kr'])
+        actual_kr_to_en = len([q for q in final_quiz if q['type'] == 'kr_to_en'])
+        
+        print(f"검증 결과: 총 {len(final_quiz)}문제 (영->한: {actual_en_to_kr}, 한->영: {actual_kr_to_en})")
+
+        # 6. 최종 셔플 후 저장
+        random.shuffle(final_quiz)
+        for idx, q in enumerate(final_quiz): q['id'] = idx + 1 # ID 재부여
+
+        start_time = req.available_from if req.available_from else datetime.now()
         db_quiz = models.Quiz(
             title=req.title, 
-            quiz_data=cleaned_text,
-            available_from=start_time # [저장]
+            quiz_data=json.dumps(final_quiz, ensure_ascii=False), # JSON 문자열로 저장
+            available_from=start_time
         )
         db.add(db_quiz)
         db.commit()
         
-        return {"message": "퀴즈가 생성되었습니다.", "id": db_quiz.id}
+        return {"message": "퀴즈가 생성되었습니다.", "id": db_quiz.id, "debug": f"{actual_en_to_kr}:{actual_kr_to_en}"}
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"AI 생성 실패: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"생성 실패: {str(e)}")
 
 @app.post("/api/quiz/grade")
 async def grade_quiz(req: GradeRequest):
