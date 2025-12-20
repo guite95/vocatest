@@ -126,7 +126,9 @@ async def create_quiz(req: QuizCreateRequest, db: Session = Depends(get_db)):
     5. Create 27 questions: Show English Word -> Ask Korean Meaning (type: "en_to_kr").
     6. Create 13 questions: Show Korean Meaning -> Ask English Word (type: "kr_to_en").
     7. Shuffle the order completely.
-    8. Output ONLY raw JSON array.
+    8. There must be no duplicate questions.
+    9. One's English and Korean pair should not appear again in reverse.
+    10. Output ONLY raw JSON array.
     Source Text:
     {combined_content}
     

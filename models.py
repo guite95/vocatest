@@ -15,5 +15,4 @@ class Quiz(Base):
     id = Column(Integer, primary_key=True, index=True)
     title = Column(String, index=True)
     quiz_data = Column(Text)
-    # 👇 이 부분이 빠져있어서 에러가 난 겁니다!
     available_from = Column(DateTime, default=datetime.now)
