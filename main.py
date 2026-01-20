@@ -262,3 +262,18 @@ async def grade_quiz(req: GradeRequest, user: dict = Depends(get_current_user)):
         return QuizService.grade_answers(req.answers)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"채점 실패: {str(e)}")
+
+# [추가] SPA 프론트엔드 라우팅 지원 (새로고침 시 404 방지)
+# 주의: 이 코드는 반드시 파일의 가장 마지막에 위치해야 합니다.
+@app.get("/{full_path:path}", response_class=HTMLResponse)
+async def spa_catch_all(request: Request, full_path: str):
+    # API나 정적 파일, 인증 관련 요청은 제외 (404 반환)
+    if full_path.startswith("api/") or full_path.startswith("static/") or full_path.startswith("auth/"):
+        raise HTTPException(status_code=404)
+
+    # 메인 페이지 로직과 동일하게 인증 체크 후 index.html 반환
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/login")
+    request.session["last_access"] = str(datetime.now())
+    return templates.TemplateResponse("index.html", {"request": request})

@@ -9,31 +9,31 @@ let wakeupTimeout = null;
 
 // --- 라우팅 시스템 ---
 function handleRoute() {
-    const hash = window.location.hash || '#/';
+    const path = window.location.pathname;
     
     // 모든 뷰 숨기기
     document.querySelectorAll('[id^="view-"]').forEach(el => el.classList.add('hidden'));
     
-    if (hash === '#/' || hash === '#home') {
+    if (path === '/' || path === '/home') {
         showView('view-home');
         loadQuizzes();
-    } else if (hash.startsWith('#/quiz/')) {
-        const quizId = hash.split('/')[2];
+    } else if (path.startsWith('/quiz/')) {
+        const quizId = path.split('/')[2];
         showView('view-quiz-play');
         startQuizPlay(quizId);
-    } else if (hash === '#/admin') {
+    } else if (path === '/admin') {
         checkAdminAuth(() => showView('view-admin'));
-    } else if (hash === '#/admin/add') {
+    } else if (path === '/admin/add') {
         checkAdminAuth(() => showView('view-admin-range'));
-    } else if (hash === '#/admin/create') {
+    } else if (path === '/admin/create') {
         checkAdminAuth(() => {
             showView('view-admin-create-quiz');
             loadRangesForQuiz();
         });
-    } else if (hash === '#/result') {
+    } else if (path === '/result') {
         showView('view-result');
     } else {
-        window.location.hash = '#/';
+        navigate('/');
     }
 }
 
@@ -46,7 +46,8 @@ function showView(viewId) {
 }
 
 function navigate(path) {
-    window.location.hash = path;
+    window.history.pushState({}, "", path);
+    handleRoute();
 }
 
 // 관리자 권한 체크 (간이)
@@ -59,7 +60,7 @@ async function checkAdminAuth(callback) {
             adminPassword = pw;
             callback();
         } else {
-            navigate('#/');
+            navigate('/');
         }
     }
 }
@@ -194,7 +195,7 @@ async function createWordRange() {
         await myAlert('저장되었습니다!');
         document.getElementById('range-name').value = '';
         document.getElementById('range-content').value = '';
-        navigate('#/admin');
+        navigate('/admin');
     } catch (e) { await myAlert('실패: ' + (e.response?.data?.detail || e.message)); }
 }
 
@@ -227,7 +228,7 @@ async function generateAndSaveQuiz() {
             title: title, word_set_ids: ids, password: adminPassword, available_from: dateVal || null
         });
         await myAlert('퀴즈 생성 완료!');
-        navigate('#/'); 
+        navigate('/'); 
     } catch (e) {
         await myAlert('생성 실패: ' + (e.response?.data?.detail || e.message));
     } finally {
@@ -246,7 +247,7 @@ async function startQuizPlay(quizId) {
         window.scrollTo(0, 0);
     } catch(e) { 
         await myAlert("오류: " + (e.response?.data?.detail || "문제를 불러올 수 없습니다.")); 
-        navigate('#/');
+        navigate('/');
     }
 }
 
@@ -284,7 +285,7 @@ async function submitQuiz() {
         const res = await axios.post('/api/quiz/grade', { answers });
         gradeResult = res.data;
         renderResultTable();
-        navigate('#/result');
+        navigate('/result');
         window.scrollTo(0, 0);
     } catch(e) { await myAlert("채점 오류: " + (e.response?.data?.detail || e.message)); document.getElementById('btn-submit').classList.remove('hidden'); }
     finally { document.getElementById('grading-loading').classList.add('hidden'); }
@@ -305,7 +306,7 @@ function renderResultTable() {
 }
 
 // --- 초기화 ---
-window.addEventListener('hashchange', handleRoute);
+window.addEventListener('popstate', handleRoute);
 window.addEventListener('DOMContentLoaded', () => {
     checkLoginStatus();
     handleRoute();
