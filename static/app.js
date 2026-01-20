@@ -169,7 +169,7 @@ async function loadQuizzes() {
             if (isLocked) {
                 div.onclick = () => myAlert(`이 시험은 ${availableFrom.toLocaleString()}부터 볼 수 있습니다.`);
             } else {
-                div.onclick = () => navigate(`#/quiz/${quiz.id}`);
+                div.onclick = () => navigate(`/quiz/${quiz.id}`);
             }
             list.appendChild(div);
         });
