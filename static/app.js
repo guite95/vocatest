@@ -77,10 +77,7 @@ async function checkLoginStatus() {
         currentUser = res.data;
         const loginBtn = document.getElementById('btn-login');
         if (currentUser) {
-            loginBtn.innerHTML = `👋 ${currentUser.username}`;
-            loginBtn.onclick = null; // 이미 로그인됨
-            loginBtn.classList.remove('bg-yellow-400', 'text-black');
-            loginBtn.classList.add('bg-green-600', 'text-white');
+            loginBtn.classList.add('hidden'); // 로그인 상태면 버튼 숨김
         } else {
             loginBtn.innerHTML = `🔑 로그인 (Discord)`;
             loginBtn.onclick = () => window.location.href = '/auth/discord/login';

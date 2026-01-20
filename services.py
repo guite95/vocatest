@@ -1,13 +1,12 @@
 import json
 import os
 import random
-import google.generativeai as genai
+from google import genai
 from prompts import EXTRACT_PAIRS_PROMPT, GRADE_PROMPT
 
 # Gemini 설정
 GENAI_API_KEY = os.getenv("GENAI_API_KEY")
-genai.configure(api_key=GENAI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash')
+client = genai.Client(api_key=GENAI_API_KEY)
 
 class QuizService:
     @staticmethod
@@ -15,7 +14,7 @@ class QuizService:
         """텍스트에서 단어 쌍을 추출하여 JSON 객체 리스트로 반환"""
         try:
             prompt = EXTRACT_PAIRS_PROMPT.format(text=text)
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
             cleaned_text = response.text.replace("```json", "").replace("```", "").strip()
             return json.loads(cleaned_text)
         except Exception as e:
@@ -78,7 +77,7 @@ class QuizService:
         """사용자 답안 채점"""
         try:
             prompt = GRADE_PROMPT.format(json_data=json.dumps(answers, ensure_ascii=False))
-            response = model.generate_content(prompt)
+            response = client.models.generate_content(model='gemini-2.0-flash', contents=prompt)
             cleaned_text = response.text.replace("```json", "").replace("```", "").strip()
             return json.loads(cleaned_text)
         except Exception as e:

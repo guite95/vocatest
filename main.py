@@ -114,10 +114,15 @@ async def read_root(request: Request):
     # [수정] 세션이 없으면 디스코드 로그인으로 강제 리다이렉트
     user = request.session.get("user")
     if not user:
-        return RedirectResponse(url="/auth/discord/login")
+        return RedirectResponse(url="/login")
     # [추가] 세션 갱신: 메인 페이지 접속 시에도 세션 유효기간 연장
     request.session["last_access"] = str(datetime.now())
     return templates.TemplateResponse("index.html", {"request": request})
+
+# [추가] 별도의 로그인 페이지
+@app.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request):
+    return templates.TemplateResponse("login.html", {"request": request})
 
 # [추가] 디스코드 로그인 엔드포인트
 @app.get("/auth/discord/login")
