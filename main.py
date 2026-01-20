@@ -8,7 +8,7 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import desc
+from sqlalchemy import desc, text
 from pydantic import BaseModel
 from database import SessionLocal, engine, Base
 import models
@@ -25,8 +25,15 @@ app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 # max_age를 설정하여 브라우저를 닫아도 로그인이 유지되도록 함 (예: 14일 = 1209600초)
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY, max_age=1209600)
 
-# [추가] 정적 파일 마운트 (JS 분리용)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# [수정] 절대 경로를 사용하여 static 폴더 위치 지정
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+STATIC_DIR = os.path.join(BASE_DIR, "static")
+
+# 폴더가 없으면 생성
+if not os.path.exists(STATIC_DIR):
+    os.makedirs(STATIC_DIR)
+
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory="templates")
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin1234")
@@ -57,6 +64,22 @@ async def get_current_user(request: Request):
 def startup_event():
     db = SessionLocal()
     try:
+        # [추가] 스키마 자동 마이그레이션 (기존 DB에 새 컬럼이 없으면 추가)
+        try:
+            db.execute(text("SELECT words_json FROM word_sets LIMIT 1"))
+        except Exception:
+            print("🔄 [Schema] 'words_json' 컬럼이 없어 추가합니다.")
+            db.execute(text("ALTER TABLE word_sets ADD COLUMN words_json TEXT"))
+            db.commit()
+            
+        try:
+            db.execute(text("SELECT available_from FROM quizzes LIMIT 1"))
+        except Exception:
+            print("🔄 [Schema] 'available_from' 컬럼이 없어 추가합니다.")
+            db.execute(text("ALTER TABLE quizzes ADD COLUMN available_from DATETIME"))
+            db.commit()
+
+        # 기존 데이터 마이그레이션 로직
         word_sets = db.query(models.WordSet).filter(models.WordSet.words_json == None).all()
         if word_sets:
             print(f"🔄 [Migration] {len(word_sets)}개의 단어장을 JSON 형식으로 변환합니다...")
