@@ -80,5 +80,9 @@ jobs:
             -v ~/quiz-data:/app/data \
             -e GENAI_API_KEY=${{ secrets.GENAI_API_KEY }} \
             -e ADMIN_PASSWORD=${{ secrets.ADMIN_PASSWORD }} \
+            -e SECRET_KEY=${{ secrets.SECRET_KEY }} \
+            -e DISCORD_CLIENT_ID=${{ secrets.DISCORD_CLIENT_ID }} \
+            -e DISCORD_CLIENT_SECRET=${{ secrets.DISCORD_CLIENT_SECRET }} \
+            -e DISCORD_REDIRECT_URI=${{ secrets.DISCORD_REDIRECT_URI }} \
             --restart unless-stopped \
             ghcr.io/guite95/vocatest/quiz-app:latest

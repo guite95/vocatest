@@ -8,6 +8,7 @@ class WordSet(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     content = Column(Text)
+    words_json = Column(Text, nullable=True) # [추가] 파싱된 단어 데이터를 JSON 문자열로 저장
 
 class Quiz(Base):
     __tablename__ = "quizzes"

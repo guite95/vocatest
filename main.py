@@ -1,26 +1,33 @@
 import os
 import json
+import httpx
 from datetime import datetime, timedelta
-import google.generativeai as genai
 from fastapi import FastAPI, Depends, HTTPException, Request, Body # [Body 추가]
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
 from pydantic import BaseModel
 from database import SessionLocal, engine, Base
 import models
+from services import QuizService
 
 # DB 초기화 (기존 데이터가 있다면 충돌날 수 있으니 db 파일 삭제 후 재시작 권장)
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
 
-# Gemini API 설정 (사용자님의 gemini-2.0-flash 모델 적용)
-GENAI_API_KEY = os.getenv("GENAI_API_KEY")
-genai.configure(api_key=GENAI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-flash') 
+# [추가] 세션 미들웨어 (시크릿 키는 환경변수로 관리 권장)
+SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-key")
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
+# max_age를 설정하여 브라우저를 닫아도 로그인이 유지되도록 함 (예: 14일 = 1209600초)
+app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY, max_age=1209600)
+
+# [추가] 정적 파일 마운트 (JS 분리용)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+templates = Jinja2Templates(directory="templates")
 
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin1234")
 
@@ -28,6 +35,37 @@ def get_db():
     db = SessionLocal()
     try:
         yield db
+    finally:
+        db.close()
+
+# [추가] 디스코드 설정
+DISCORD_CLIENT_ID = os.getenv("DISCORD_CLIENT_ID")
+DISCORD_CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET")
+DISCORD_REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI") # 예: https://your-domain.com/auth/discord/callback
+
+# [추가] 사용자 세션 확인 의존성
+async def get_current_user(request: Request):
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="로그인이 필요합니다.")
+    # [추가] 세션 갱신 (Sliding Session): API 호출 시마다 세션 데이터 수정 -> 쿠키 유효기간 초기화
+    request.session["last_access"] = str(datetime.now())
+    return user
+
+# [추가] 시작 시 데이터 마이그레이션 (기존 텍스트 -> JSON 변환)
+@app.on_event("startup")
+def startup_event():
+    db = SessionLocal()
+    try:
+        word_sets = db.query(models.WordSet).filter(models.WordSet.words_json == None).all()
+        if word_sets:
+            print(f"🔄 [Migration] {len(word_sets)}개의 단어장을 JSON 형식으로 변환합니다...")
+            for ws in word_sets:
+                parsed_data = QuizService.extract_words_from_text(ws.content)
+                ws.words_json = json.dumps(parsed_data, ensure_ascii=False)
+                print(f"   - '{ws.name}' 변환 완료 ({len(parsed_data)} 단어)")
+            db.commit()
+            print("✅ Migration 완료")
     finally:
         db.close()
 
@@ -50,7 +88,57 @@ class GradeRequest(BaseModel):
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
+    # [수정] 세션이 없으면 디스코드 로그인으로 강제 리다이렉트
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/auth/discord/login")
+    # [추가] 세션 갱신: 메인 페이지 접속 시에도 세션 유효기간 연장
+    request.session["last_access"] = str(datetime.now())
     return templates.TemplateResponse("index.html", {"request": request})
+
+# [추가] 디스코드 로그인 엔드포인트
+@app.get("/auth/discord/login")
+async def login_via_discord():
+    if not DISCORD_CLIENT_ID or not DISCORD_REDIRECT_URI:
+        raise HTTPException(status_code=500, detail="서버 인증 설정 오류")
+    return RedirectResponse(
+        f"https://discord.com/api/oauth2/authorize?client_id={DISCORD_CLIENT_ID}&redirect_uri={DISCORD_REDIRECT_URI}&response_type=code&scope=identify"
+    )
+
+# [추가] 디스코드 콜백
+@app.get("/auth/discord/callback")
+async def discord_callback(code: str, request: Request):
+    async with httpx.AsyncClient() as client:
+        # 토큰 교환
+        token_resp = await client.post("https://discord.com/api/oauth2/token", data={
+            "client_id": DISCORD_CLIENT_ID,
+            "client_secret": DISCORD_CLIENT_SECRET,
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": DISCORD_REDIRECT_URI,
+        }, headers={"Content-Type": "application/x-www-form-urlencoded"})
+        
+        token_data = token_resp.json()
+        access_token = token_data.get("access_token")
+        
+        if not access_token:
+            raise HTTPException(status_code=400, detail="인증 실패")
+
+        # 사용자 정보 조회
+        user_resp = await client.get("https://discord.com/api/users/@me", headers={
+            "Authorization": f"Bearer {access_token}"
+        })
+        user_data = user_resp.json()
+        
+        # 세션에 저장 (닉네임 등)
+        request.session["user"] = {"id": user_data["id"], "username": user_data["username"]}
+        
+    return RedirectResponse(url="/")
+
+# [추가] 현재 로그인 정보 확인 API
+@app.get("/api/me")
+def get_me(request: Request):
+    return request.session.get("user", None)
 
 @app.get("/api/word-sets")
 def read_word_sets(db: Session = Depends(get_db)):
@@ -60,7 +148,10 @@ def read_word_sets(db: Session = Depends(get_db)):
 def create_word_set(item: WordSetCreate, db: Session = Depends(get_db)):
     if item.password != ADMIN_PASSWORD:
         raise HTTPException(status_code=401, detail="비밀번호가 틀렸습니다.")
-    db_item = models.WordSet(name=item.name, content=item.content)
+    
+    # [수정] 저장 시 바로 JSON 파싱 수행
+    parsed_data = QuizService.extract_words_from_text(item.content)
+    db_item = models.WordSet(name=item.name, content=item.content, words_json=json.dumps(parsed_data, ensure_ascii=False))
     db.add(db_item)
     db.commit()
     db.refresh(db_item)
@@ -110,71 +201,17 @@ async def create_quiz(req: QuizCreateRequest, db: Session = Depends(get_db)):
     if not selected_sets:
         raise HTTPException(status_code=404, detail="선택된 범위가 없습니다.")
     
-    combined_content = "\n".join([s.content for s in selected_sets])
+    # [수정] DB에 저장된 JSON 데이터를 합쳐서 사용 (AI 호출 X -> 속도 대폭 향상)
+    combined_data = []
+    for s in selected_sets:
+        if s.words_json:
+            combined_data.append(json.loads(s.words_json))
+        else:
+            # 마이그레이션이 안 된 데이터가 있다면 즉석 파싱 (fallback)
+            combined_data.append(QuizService.extract_words_from_text(s.content))
 
-    # 1. AI에게는 '데이터 추출'만 요청 (단순화된 프롬프트)
-    prompt = f"""
-    Extract all unique English-Korean vocabulary pairs from the text below.
-    Format: A RAW JSON array of objects. 
-    Each object must have "en" and "kr" keys.
-    Source Text:
-    {combined_content}
-    """
-    
     try:
-        response = model.generate_content(prompt)
-        cleaned_text = response.text.replace("```json", "").replace("```", "").strip()
-        all_words = json.loads(cleaned_text) # 추출된 전체 단어 리스트
-
-        # 2. Python에서 중복 제거 및 무작위 셔플
-        import random
-        random.shuffle(all_words)
-
-        # 3. 40개 선택 (단어가 부족하면 전체 선택)
-        target_total = 40
-        selected_pairs = all_words[:target_total]
-        
-        # 4. 비율 계산 (27:13)
-        # 만약 전체 단어가 40개가 안 될 경우를 대비해 비율로 계산
-        en_to_kr_count = int(len(selected_pairs) * (27/40))
-        
-        final_quiz = []
-        for i, pair in enumerate(selected_pairs):
-            # 'word1 / word2' 형태인 경우 첫 번째 단어만 사용
-            en_val = pair['en'].split('/')[0].strip()
-            kr_val = pair['kr'].split('/')[0].strip()
-            
-            if i < en_to_kr_count:
-                final_quiz.append({
-                    "id": i + 1,
-                    "question": en_val,
-                    "answer_key": kr_val,
-                    "type": "en_to_kr"
-                })
-            else:
-                final_quiz.append({
-                    "id": i + 1,
-                    "question": kr_val,
-                    "answer_key": en_val,
-                    "type": "kr_to_en"
-                })
-
-        # 5. 최종 검증 로직 (Validation)
-        # (1) 중복 문제 검사
-        questions = [q['question'] for q in final_quiz]
-        if len(questions) != len(set(questions)):
-            # 중복 발생 시 로직 재실행 혹은 에러 처리 (여기서는 중복 제거 후 재정렬 가능)
-            pass 
-
-        # (2) 타입별 개수 검사
-        actual_en_to_kr = len([q for q in final_quiz if q['type'] == 'en_to_kr'])
-        actual_kr_to_en = len([q for q in final_quiz if q['type'] == 'kr_to_en'])
-        
-        print(f"검증 결과: 총 {len(final_quiz)}문제 (영->한: {actual_en_to_kr}, 한->영: {actual_kr_to_en})")
-
-        # 6. 최종 셔플 후 저장
-        random.shuffle(final_quiz)
-        for idx, q in enumerate(final_quiz): q['id'] = idx + 1 # ID 재부여
+        final_quiz, en_cnt, kr_cnt = QuizService.generate_quiz_from_json(combined_data)
 
         start_time = req.available_from if req.available_from else datetime.now()
         db_quiz = models.Quiz(
@@ -185,33 +222,15 @@ async def create_quiz(req: QuizCreateRequest, db: Session = Depends(get_db)):
         db.add(db_quiz)
         db.commit()
         
-        return {"message": "퀴즈가 생성되었습니다.", "id": db_quiz.id, "debug": f"{actual_en_to_kr}:{actual_kr_to_en}"}
+        return {"message": "퀴즈가 생성되었습니다.", "id": db_quiz.id, "debug": f"{en_cnt}:{kr_cnt}"}
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"생성 실패: {str(e)}")
 
+# [수정] 채점 API에 인증 의존성 추가
 @app.post("/api/quiz/grade")
-async def grade_quiz(req: GradeRequest):
-    prompt = f"""
-    You are an English teacher grading a vocabulary test.
-    
-    Rules:
-    1. en_to_kr: If the user's Korean meaning is contextually similar, mark true.
-    2. kr_to_en: If the user provides a valid synonym, mark true. Spelling must be correct.
-    3. Return a RAW JSON array.
-
-    Data:
-    {json.dumps(req.answers, ensure_ascii=False)}
-
-    Output Format:
-    [
-        {{"question": "...", "user_answer": "...", "correct_answer": "...", "is_correct": true}},
-        ...
-    ]
-    """
+async def grade_quiz(req: GradeRequest, user: dict = Depends(get_current_user)):
     try:
-        response = model.generate_content(prompt)
-        cleaned_text = response.text.replace("```json", "").replace("```", "").strip()
-        return json.loads(cleaned_text)
+        return QuizService.grade_answers(req.answers)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"채점 실패: {str(e)}")
