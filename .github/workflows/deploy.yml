@@ -76,6 +76,7 @@ jobs:
           
           docker run -d \
             --name quiz-app \
+            --network voca-network \
             -p 8000:8000 \
             -v ~/quiz-data:/app/data \
             -e GENAI_API_KEY=${{ secrets.GENAI_API_KEY }} \
