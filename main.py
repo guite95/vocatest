@@ -271,7 +271,6 @@ async def spa_catch_all(request: Request, full_path: str):
     if full_path.startswith("api/") or full_path.startswith("static/") or full_path.startswith("auth/"):
         raise HTTPException(status_code=404)
 
-    # 메인 페이지 로직과 동일하게 인증 체크 후 index.html 반환
     user = request.session.get("user")
     if not user:
         return RedirectResponse(url="/login")
