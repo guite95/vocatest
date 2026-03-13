@@ -4,7 +4,6 @@ on:
   push:
     branches: [ "main" ]
 
-# 1. 권한 설정 추가 (필수!)
 permissions:
   contents: read
   packages: write
@@ -16,7 +15,9 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    # 2. 이미지 이름을 소문자로 변환하는 단계 추가
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
@@ -27,20 +28,19 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Lowercase image name
+    - name: Set Image Name
       run: |
-        echo "IMAGE_NAME=ghcr.io/${{ github.repository }}/quiz-app" >> $GITHUB_ENV
-        # 위 줄은 리포지토리 이름을 가져와서 IMAGE_NAME 환경변수로 만듭니다.
-        # 도커는 대문자를 싫어하므로, 아래 단계에서 소문자로 변환된 값을 사용하게 됩니다.
+        REPO_NAME=$(echo "${{ github.repository }}/quiz-app" | tr '[:upper:]' '[:lower:]')
+        echo "IMAGE_NAME=ghcr.io/${REPO_NAME}" >> $GITHUB_ENV
 
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
         context: .
         file: ./Dockerfile
-        platform: linux/arm64
+        platforms: linux/arm64
         push: true
-        tags: ghcr.io/${{ github.repository_owner }}/quiz-app:latest
+        tags: ${{ env.IMAGE_NAME }}:latest
 
     - name: Deploy via SSH
       uses: appleboy/ssh-action@master
@@ -48,11 +48,12 @@ jobs:
         host: ${{ secrets.ORACLE_HOST }}
         username: ${{ secrets.ORACLE_USER }}
         key: ${{ secrets.ORACLE_KEY }}
+        envs: IMAGE_NAME
         script: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
           
-          # 여기도 소문자로 적어주세요
-          docker pull ghcr.io/guite95/vocatest/quiz-app:latest
+          # 새 이미지를 가져옵니다.
+          docker pull $IMAGE_NAME:latest
           
           docker stop quiz-app || true
           docker rm quiz-app || true
@@ -69,4 +70,4 @@ jobs:
             -e DISCORD_CLIENT_SECRET=${{ secrets.DISCORD_CLIENT_SECRET }} \
             -e DISCORD_REDIRECT_URI=${{ secrets.DISCORD_REDIRECT_URI }} \
             --restart unless-stopped \
-            ghcr.io/guite95/vocatest/quiz-app:latest
+            $IMAGE_NAME:latest
