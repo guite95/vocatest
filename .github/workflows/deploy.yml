@@ -48,6 +48,7 @@ jobs:
         host: ${{ secrets.ORACLE_HOST }}
         username: ${{ secrets.ORACLE_USER }}
         key: ${{ secrets.ORACLE_KEY }}
+        port: ${{ secrets.ORACLE_PORT }}
         envs: IMAGE_NAME
         script: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
