@@ -116,12 +116,12 @@ async def read_root(request: Request):
         return RedirectResponse(url="/login")
     # [추가] 세션 갱신: 메인 페이지 접속 시에도 세션 유효기간 연장
     request.session["last_access"] = str(datetime.now())
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html")
 
 # [추가] 별도의 로그인 페이지
 @app.get("/login", response_class=HTMLResponse)
 async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="login.html")
 
 # [추가] 디스코드 로그인 엔드포인트
 @app.get("/auth/discord/login")
@@ -277,4 +277,4 @@ async def spa_catch_all(request: Request, full_path: str):
     if not user:
         return RedirectResponse(url="/login")
     request.session["last_access"] = str(datetime.now())
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="index.html")
