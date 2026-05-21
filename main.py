@@ -21,7 +21,6 @@ app = FastAPI()
 
 # [추가] 세션 미들웨어 (시크릿 키는 환경변수로 관리 권장)
 SECRET_KEY = os.getenv("SECRET_KEY", "super-secret-key")
-app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY)
 # max_age를 설정하여 브라우저를 닫아도 로그인이 유지되도록 함 (예: 14일 = 1209600초)
 app.add_middleware(SessionMiddleware, secret_key=SECRET_KEY, max_age=1209600)
 
