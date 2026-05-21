@@ -269,6 +269,9 @@ async def spa_catch_all(request: Request, full_path: str):
     # API나 정적 파일, 인증 관련 요청은 제외 (404 반환)
     if full_path.startswith("api/") or full_path.startswith("static/") or full_path.startswith("auth/"):
         raise HTTPException(status_code=404)
+    
+    if full_path == "login":
+        raise HTTPException(status_code=404)
 
     user = request.session.get("user")
     if not user:
