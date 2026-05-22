@@ -2,21 +2,34 @@ let adminPassword = "";
 let currentQuizData = [];
 let gradeResult = [];
 let currentUser = null;
+let currentRoomCode = null;
+let currentQuizId = null;
 
 // [최적화] 타이머 변수 전역 관리
 let activeInterval = null;
 let wakeupTimeout = null;
+let roomPollingInterval = null;
 
 // --- 라우팅 시스템 ---
 function handleRoute() {
     const path = window.location.pathname;
     
+    // 폴링 중지
+    if (roomPollingInterval) {
+        clearInterval(roomPollingInterval);
+        roomPollingInterval = null;
+    }
+
     // 모든 뷰 숨기기
     document.querySelectorAll('[id^="view-"]').forEach(el => el.classList.add('hidden'));
     
     if (path === '/' || path === '/home') {
         showView('view-home');
         loadQuizzes();
+    } else if (path.startsWith('/room/')) {
+        const code = path.split('/')[2];
+        showView('view-room-waiting');
+        startRoomWaiting(code);
     } else if (path.startsWith('/quiz/')) {
         const quizId = path.split('/')[2];
         showView('view-quiz-play');
@@ -32,6 +45,9 @@ function handleRoute() {
         });
     } else if (path === '/result') {
         showView('view-result');
+        if (currentRoomCode) {
+            startResultPolling(currentRoomCode);
+        }
     } else {
         navigate('/');
     }
@@ -50,7 +66,7 @@ function navigate(path) {
     handleRoute();
 }
 
-// 관리자 권한 체크 (간이)
+// 관리자 권한 체크
 async function checkAdminAuth(callback) {
     if (adminPassword) {
         callback();
@@ -76,62 +92,7 @@ async function checkLoginStatus() {
     try {
         const res = await axios.get('/api/me');
         currentUser = res.data;
-        const loginBtn = document.getElementById('btn-login');
-        if (currentUser) {
-            loginBtn.classList.add('hidden'); // 로그인 상태면 버튼 숨김
-        } else {
-            loginBtn.innerHTML = `🔑 로그인 (Discord)`;
-            loginBtn.onclick = () => window.location.href = '/auth/discord/login';
-        }
     } catch (e) { console.error("Auth check failed", e); }
-}
-
-// --- 스마트 감시 시스템 ---
-function startSmartMonitoring(quizzes) {
-    if (activeInterval) clearInterval(activeInterval);
-    if (wakeupTimeout) clearTimeout(wakeupTimeout);
-    
-    const now = new Date();
-    let urgentQuizzes = [];
-    let minDiffForNextWakeup = Infinity;
-
-    quizzes.forEach(q => {
-        const openTime = parseDateSafe(q.available_from);
-        if (!openTime || openTime <= now) return;
-
-        const diff = openTime - now;
-        if (diff <= 60000) { 
-            urgentQuizzes.push(q);
-        } else {
-            const timeUntilUrgent = diff - 60000;
-            if (timeUntilUrgent < minDiffForNextWakeup) {
-                minDiffForNextWakeup = timeUntilUrgent;
-            }
-        }
-    });
-
-    if (urgentQuizzes.length > 0) {
-        activeInterval = setInterval(() => checkUrgentQuizzes(urgentQuizzes), 1000);
-    }
-
-    if (minDiffForNextWakeup !== Infinity) {
-        wakeupTimeout = setTimeout(() => startSmartMonitoring(quizzes), minDiffForNextWakeup);
-    }
-}
-
-function checkUrgentQuizzes(urgentList) {
-    const now = new Date();
-    let opened = false;
-    urgentList.forEach((q, idx) => {
-        if (!q) return;
-        const openTime = parseDateSafe(q.available_from);
-        if (openTime <= now) {
-            myAlert(`📢 딩동! '${q.title}' 시험이 지금 공개되었습니다!`);
-            delete urgentList[idx];
-            opened = true;
-        }
-    });
-    if (opened) loadQuizzes();
 }
 
 // --- 앱 로직 ---
@@ -146,7 +107,6 @@ async function loadQuizzes() {
             return;
         }
 
-        startSmartMonitoring(res.data);
         const now = new Date(); 
 
         res.data.forEach(quiz => {
@@ -162,20 +122,233 @@ async function loadQuizzes() {
 
             div.innerHTML = `
                 <div class="flex justify-between items-start">
-                    <div><h3 class="font-bold text-lg text-gray-800 ${isLocked ? 'text-gray-500' : ''}">${quiz.title}</h3>${timeText}</div>
-                    <button onclick="event.stopPropagation(); deleteQuiz(${quiz.id})" class="text-gray-300 hover:text-red-500 p-2 rounded-full transition" title="삭제">X</button>
+                    <div class="flex-1">
+                        <h3 class="font-bold text-lg text-gray-800 ${isLocked ? 'text-gray-500' : ''}">${quiz.title}</h3>
+                        ${timeText}
+                    </div>
+                    <div class="flex gap-2">
+                        ${!isLocked ? `<button onclick="event.stopPropagation(); createRoom(${quiz.id})" class="bg-blue-50 text-blue-600 px-3 py-1 rounded-lg text-xs font-bold hover:bg-blue-100">🏠 방 만들기</button>` : ''}
+                        <button onclick="event.stopPropagation(); deleteQuiz(${quiz.id})" class="text-gray-300 hover:text-red-500 p-1 rounded-full transition" title="삭제">✕</button>
+                    </div>
                 </div>`;
 
             if (isLocked) {
                 div.onclick = () => myAlert(`이 시험은 ${availableFrom.toLocaleString()}부터 볼 수 있습니다.`);
             } else {
-                div.onclick = () => navigate(`/quiz/${quiz.id}`);
+                div.onclick = () => {
+                    currentRoomCode = null;
+                    navigate(`/quiz/${quiz.id}`);
+                };
             }
             list.appendChild(div);
         });
     } catch(e) { console.error(e); }
 }
 
+// --- Room Logic ---
+async function createRoom(quizId) {
+    try {
+        const res = await axios.post('/api/rooms', { quiz_id: quizId });
+        navigate(`/room/${res.data.code}`);
+    } catch (e) { await myAlert("방 생성 실패: " + (e.response?.data?.detail || e.message)); }
+}
+
+async function joinRoomByCode() {
+    const code = document.getElementById('join-room-code').value;
+    if (!code || code.length !== 4) return myAlert("4자리 참여 코드를 입력해주세요.");
+    try {
+        await axios.post('/api/rooms/join', { code });
+        navigate(`/room/${code}`);
+    } catch (e) { await myAlert("입장 실패: " + (e.response?.data?.detail || e.message)); }
+}
+
+async function startRoomWaiting(code) {
+    currentRoomCode = code;
+    updateRoomUI(code);
+    
+    // 폴링 시작
+    if (roomPollingInterval) clearInterval(roomPollingInterval);
+    roomPollingInterval = setInterval(() => pollRoomStatus(code), 3000);
+    pollRoomStatus(code); // 즉시 1회 실행
+}
+
+async function pollRoomStatus(code) {
+    try {
+        const res = await axios.get(`/api/rooms/${code}`);
+        const room = res.data;
+        currentQuizId = room.quiz_id;
+
+        // UI 업데이트
+        document.getElementById('participant-count').innerText = room.participants.length;
+        const list = document.getElementById('room-participant-list');
+        list.innerHTML = room.participants.map(p => `
+            <div class="bg-white p-3 rounded-xl border border-gray-200 text-center shadow-sm">
+                <div class="text-xs text-gray-400 mb-1">${p.username === room.owner ? '👑 방장' : '👤 유저'}</div>
+                <div class="font-bold text-gray-800 truncate">${p.username}</div>
+            </div>
+        `).join('');
+
+        // 방장인 경우 시작 버튼 표시
+        if (room.owner === currentUser?.username) {
+            document.getElementById('btn-start-quiz').classList.remove('hidden');
+            document.getElementById('waiting-msg').classList.add('hidden');
+        } else {
+            document.getElementById('btn-start-quiz').classList.add('hidden');
+            document.getElementById('waiting-msg').classList.remove('hidden');
+        }
+
+        // 시험 시작 체크
+        if (room.status === 'running') {
+            clearInterval(roomPollingInterval);
+            roomPollingInterval = null;
+            navigate(`/quiz/${room.quiz_id}`);
+        }
+    } catch (e) {
+        clearInterval(roomPollingInterval);
+        roomPollingInterval = null;
+        myAlert("방 정보를 불러올 수 없습니다.");
+        navigate('/');
+    }
+}
+
+async function startRoomQuiz() {
+    try {
+        await axios.post(`/api/rooms/${currentRoomCode}/start`);
+    } catch (e) { myAlert("시작 실패: " + (e.response?.data?.detail || e.message)); }
+}
+
+function updateRoomUI(code) {
+    document.getElementById('room-code-display').innerText = code;
+}
+
+// --- Result Polling ---
+function startResultPolling(code) {
+    if (roomPollingInterval) clearInterval(roomPollingInterval);
+    roomPollingInterval = setInterval(async () => {
+        try {
+            const res = await axios.get(`/api/rooms/${code}`);
+            renderParticipantStatus(res.data.participants);
+        } catch (e) { clearInterval(roomPollingInterval); }
+    }, 3000);
+}
+
+function renderParticipantStatus(participants) {
+    const list = document.getElementById('result-participant-list');
+    const allFinished = participants.every(p => p.is_finished);
+    
+    list.innerHTML = participants.map(p => {
+        const canClick = allFinished && p.username !== currentUser?.username;
+        return `
+            <div onclick="${canClick ? `viewOtherResult('${p.username}')` : ''}" 
+                 class="flex items-center justify-between p-2 rounded-lg border ${p.is_finished ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'} ${canClick ? 'cursor-pointer hover:bg-blue-100 transition' : ''}">
+                <span class="text-sm font-bold ${p.is_finished ? 'text-blue-700' : 'text-gray-500'}">${p.username}</span>
+                <span class="text-[10px] ${p.is_finished ? 'bg-blue-600 text-white' : 'bg-gray-300 text-white'} px-2 py-0.5 rounded-full">
+                    ${p.is_finished ? '제출완료' : '풀고있음'}
+                </span>
+            </div>
+        `;
+    }).join('');
+
+    document.getElementById('result-notice').innerText = allFinished ? "✅ 전원 제출 완료! 이름을 클릭하여 오답을 확인하세요." : "* 전원 제출 완료 시 이름을 클릭하여 오답 노트를 확인할 수 있습니다.";
+}
+
+async function viewOtherResult(username) {
+    try {
+        const res = await axios.get(`/api/records/${currentQuizId}?username=${username}&room_code=${currentRoomCode}`);
+        renderResultTable(res.data.result, username, res.data.score);
+    } catch (e) { myAlert("기록을 불러올 수 없습니다."); }
+}
+
+// --- Quiz Logic ---
+async function startQuizPlay(quizId) {
+    currentQuizId = quizId;
+    try {
+        const res = await axios.get(`/api/quizzes/${quizId}`);
+        currentQuizData = res.data.quiz_data;
+        document.getElementById('play-title').innerText = res.data.title;
+        renderQuizQuestions();
+        window.scrollTo(0, 0);
+    } catch(e) { 
+        await myAlert("오류: " + (e.response?.data?.detail || "문제를 불러올 수 없습니다.")); 
+        navigate('/');
+    }
+}
+
+function renderQuizQuestions() {
+    const container = document.getElementById('quiz-container');
+    container.innerHTML = '';
+    currentQuizData.forEach((q, idx) => {
+        const isEngToKor = q.type === 'en_to_kr';
+        const div = document.createElement('div');
+        div.className = 'bg-white p-6 rounded-xl border border-gray-200 shadow-sm';
+        div.innerHTML = `
+            <div class="flex items-center gap-3 mb-4"><span class="bg-blue-100 text-blue-800 font-bold px-3 py-1 rounded-lg text-sm">Q${idx+1}</span><span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">${isEngToKor ? '뜻 쓰기' : '단어 쓰기'}</span></div>
+            <div class="mb-4 text-xl font-bold text-gray-800">${q.question}</div>
+            <input type="text" id="answer-${idx}" class="w-full border-b-2 border-gray-200 bg-gray-50 p-3 rounded-t-md focus:border-blue-500 focus:outline-none text-lg" placeholder="정답 입력" autocomplete="off">
+        `;
+        container.appendChild(div);
+    });
+}
+
+async function submitQuiz() {
+    if(!currentUser) {
+        await myAlert("채점하려면 로그인이 필요합니다.");
+        window.location.href = '/auth/discord/login';
+        return;
+    }
+    if(!await myConfirm("제출하시겠습니까?")) return;
+    document.getElementById('btn-submit').classList.add('hidden');
+    document.getElementById('grading-loading').classList.remove('hidden');
+    
+    const answers = currentQuizData.map((q, idx) => ({
+        question: q.question, user_answer: document.getElementById(`answer-${idx}`).value, correct_answer: q.answer_key, type: q.type
+    }));
+
+    try {
+        const res = await axios.post('/api/quiz/grade', { 
+            answers, 
+            quiz_id: currentQuizId, 
+            room_code: currentRoomCode 
+        });
+        gradeResult = res.data;
+        renderResultTable(gradeResult, currentUser.username);
+        navigate('/result');
+        window.scrollTo(0, 0);
+    } catch(e) { 
+        await myAlert("채점 오류: " + (e.response?.data?.detail || e.message)); 
+        document.getElementById('btn-submit').classList.remove('hidden'); 
+    } finally { 
+        document.getElementById('grading-loading').classList.add('hidden'); 
+    }
+}
+
+function renderResultTable(data, username, scoreOverride = null) {
+    const tbody = document.getElementById('result-table-body');
+    tbody.innerHTML = '';
+    
+    let score = scoreOverride;
+    if (score === null) {
+        const correctCount = data.filter(r => r.is_correct).length;
+        score = Math.round((correctCount / data.length) * 100);
+    }
+
+    document.querySelector('#view-result h2').innerHTML = `채점 결과 <span class="text-blue-600 ml-2">(${score}점)</span>`;
+    document.getElementById('result-user-display').innerText = `${username}님의 시험 결과입니다.`;
+
+    data.forEach(row => {
+        const tr = document.createElement('tr');
+        tr.className = row.is_correct ? '' : 'bg-red-50';
+        tr.innerHTML = `
+            <td class="px-4 py-3">${row.question}</td>
+            <td class="px-4 py-3 font-bold ${row.is_correct ? 'text-blue-600' : 'text-red-600'}">${row.user_answer}</td>
+            <td class="px-4 py-3 text-gray-500">${row.correct_answer}</td>
+            <td class="px-4 py-3 text-center">${row.is_correct ? '✅' : '❌'}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+// --- 관리자/단어장 로직 ---
 async function deleteQuiz(quizId) {
     const pw = await myPrompt("시험지를 삭제하시겠습니까?\n관리자 비밀번호를 입력하세요:", "비밀번호");
     if (!pw) return;
@@ -237,84 +410,9 @@ async function generateAndSaveQuiz() {
     }
 }
 
-async function startQuizPlay(quizId) {
-    try {
-        const res = await axios.get(`/api/quizzes/${quizId}`);
-        currentQuizData = res.data;
-        // 제목 설정 로직이 필요하다면 API에서 제목도 리턴받아야 함 (현재는 quiz_data만 리턴)
-        // document.getElementById('play-title').innerText = "시험"; 
-        renderQuizQuestions();
-        window.scrollTo(0, 0);
-    } catch(e) { 
-        await myAlert("오류: " + (e.response?.data?.detail || "문제를 불러올 수 없습니다.")); 
-        navigate('/');
-    }
-}
-
-function renderQuizQuestions() {
-    const container = document.getElementById('quiz-container');
-    container.innerHTML = '';
-    currentQuizData.forEach((q, idx) => {
-        const isEngToKor = q.type === 'en_to_kr';
-        const div = document.createElement('div');
-        div.className = 'bg-white p-6 rounded-xl border border-gray-200 shadow-sm';
-        div.innerHTML = `
-            <div class="flex items-center gap-3 mb-4"><span class="bg-blue-100 text-blue-800 font-bold px-3 py-1 rounded-lg text-sm">Q${idx+1}</span><span class="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">${isEngToKor ? '뜻 쓰기' : '단어 쓰기'}</span></div>
-            <div class="mb-4 text-xl font-bold text-gray-800">${q.question}</div>
-            <input type="text" id="answer-${idx}" class="w-full border-b-2 border-gray-200 bg-gray-50 p-3 rounded-t-md focus:border-blue-500 focus:outline-none text-lg" placeholder="정답 입력" autocomplete="off">
-        `;
-        container.appendChild(div);
-    });
-}
-
-async function submitQuiz() {
-    if(!currentUser) {
-        await myAlert("채점하려면 로그인이 필요합니다.");
-        window.location.href = '/auth/discord/login';
-        return;
-    }
-    if(!await myConfirm("제출하시겠습니까?")) return;
-    document.getElementById('btn-submit').classList.add('hidden');
-    document.getElementById('grading-loading').classList.remove('hidden');
-    
-    const answers = currentQuizData.map((q, idx) => ({
-        question: q.question, user_answer: document.getElementById(`answer-${idx}`).value, correct_answer: q.answer_key, type: q.type
-    }));
-
-    try {
-        const res = await axios.post('/api/quiz/grade', { answers });
-        gradeResult = res.data;
-        renderResultTable();
-        navigate('/result');
-        window.scrollTo(0, 0);
-    } catch(e) { await myAlert("채점 오류: " + (e.response?.data?.detail || e.message)); document.getElementById('btn-submit').classList.remove('hidden'); }
-    finally { document.getElementById('grading-loading').classList.add('hidden'); }
-}
-
-function renderResultTable() {
-    const tbody = document.getElementById('result-table-body');
-    tbody.innerHTML = '';
-    const score = Math.round((gradeResult.filter(r => r.is_correct).length / gradeResult.length) * 100);
-    document.querySelector('#view-result h2').innerHTML = `채점 결과 <span class="text-blue-600 ml-2">(${score}점)</span>`;
-
-    gradeResult.forEach(row => {
-        const tr = document.createElement('tr');
-        tr.className = row.is_correct ? '' : 'bg-red-50';
-        tr.innerHTML = `<td class="px-4 py-3">${row.question}</td><td class="px-4 py-3 font-bold ${row.is_correct ? 'text-blue-600' : 'text-red-600'}">${row.user_answer}</td><td class="px-4 py-3 text-gray-500">${row.correct_answer}</td><td class="px-4 py-3 text-center">${row.is_correct ? '✅' : '❌'}</td>`;
-        tbody.appendChild(tr);
-    });
-}
-
-// --- 초기화 ---
-window.addEventListener('popstate', handleRoute);
-window.addEventListener('DOMContentLoaded', () => {
-    checkLoginStatus();
-    handleRoute();
-});
-
 // --- 오답노트 다운로드 ---
 function downloadWrongAnswers() {
-    if(typeof gradeResult === 'undefined' || gradeResult.length === 0) return myAlert("데이터가 없습니다.");
+    if(!gradeResult || gradeResult.length === 0) return myAlert("데이터가 없습니다.");
     const wrong = gradeResult.filter(r => !r.is_correct);
     if(wrong.length === 0) return myAlert("틀린 문제가 없습니다!");
     let text = "오답노트\n====================\n";
@@ -325,7 +423,7 @@ function downloadWrongAnswers() {
     a.click();
 }
 
-// --- 모달(알림창) 시스템 ---
+// --- 모달 시스템 ---
 function showModal({ type, title, message, placeholder = "" }) {
     return new Promise((resolve) => {
         const backdrop = document.getElementById('custom-modal-backdrop');
@@ -386,3 +484,10 @@ function closeModal() {
 async function myAlert(msg) { await showModal({ type: 'alert', title: '알림', message: msg }); }
 async function myConfirm(msg) { return await showModal({ type: 'confirm', title: '확인', message: msg }); }
 async function myPrompt(msg, placeholder) { return await showModal({ type: 'prompt', title: '입력', message: msg, placeholder: placeholder }); }
+
+// --- 초기화 ---
+window.addEventListener('popstate', handleRoute);
+window.addEventListener('DOMContentLoaded', () => {
+    checkLoginStatus();
+    handleRoute();
+});
