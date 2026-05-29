@@ -334,6 +334,13 @@ async function startQuizPlay(quizId) {
     currentQuizId = quizId;
     isQuizPlaying = true;
     saveSessionState();
+    
+    // 이전 시험 제출 후 숨겨진 버튼과 로딩 창 상태 초기화
+    const submitBtn = document.getElementById('btn-submit');
+    if (submitBtn) submitBtn.classList.remove('hidden');
+    const loadingSpinner = document.getElementById('grading-loading');
+    if (loadingSpinner) loadingSpinner.classList.add('hidden');
+
     try {
         const res = await axios.get(`/api/quizzes/${quizId}`);
         currentQuizData = res.data.quiz_data;
