@@ -3,6 +3,7 @@ import json
 import httpx
 import random
 import string
+from typing import Optional
 from datetime import datetime, timedelta
 from fastapi import FastAPI, Depends, HTTPException, Request, Body
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -91,12 +92,12 @@ class QuizCreateRequest(BaseModel):
     title: str
     word_set_ids: list[int]
     password: str
-    available_from: datetime = None
+    available_from: Optional[datetime] = None
 
 class GradeRequest(BaseModel):
     answers: list
     quiz_id: int
-    room_code: str = None
+    room_code: Optional[str] = None
 
 class RoomCreateRequest(BaseModel):
     quiz_id: int
